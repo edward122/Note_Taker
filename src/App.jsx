@@ -1,9 +1,17 @@
-import './App.css'
+// App.jsx
+import { Routes, Route } from 'react-router-dom';
+import AuthForm from './components/AuthForm';
+import Dashboard from './components/Dashboard';
+import MindMapEditor from './components/MindMapEditor';
 
-export default function App() {
+function App() {
   return (
-    <main>
-      React ⚛️ + Vite ⚡ + Replit
-    </main>
-  )
+    <Routes>
+      <Route path="/" element={<AuthForm />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/editor/:id" element={<MindMapEditor />} />
+    </Routes>
+  );
 }
+
+export default App;
