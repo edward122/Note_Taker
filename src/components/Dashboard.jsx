@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   deleteDoc,
   doc,
+  setDoc,
   updateDoc,
   arrayUnion
 } from 'firebase/firestore';
@@ -217,17 +218,37 @@ const Dashboard = () => {
       }
       const user = auth.currentUser;
       const docRef = await addDoc(collection(db, 'mindMaps'), {
-        title: "Imported Mind Map",
+        title: file.name,
         userId: user.uid,
         createdAt: serverTimestamp()
       });
       // Import nodes
+      const nodeIdMapping = {};
       for (const node of data.nodes) {
-        await addDoc(collection(db, 'mindMaps', docRef.id, 'nodes'), node);
+        const oldId = node.id; // preserve old ID for mapping
+        // Create a new document reference which generates a new ID
+        const newNodeRef = doc(collection(db, 'mindMaps', docRef.id, 'nodes'));
+        // Save the node data, overriding the "id" field with the new document ID
+        await setDoc(newNodeRef, { ...node, id: newNodeRef.id });
+        // Store mapping from the old node id to the new node id
+        nodeIdMapping[oldId] = newNodeRef.id;
       }
-      // Import links
+
+      // Now process the links using the mapping
       for (const link of data.links) {
-        await addDoc(collection(db, 'mindMaps', docRef.id, 'links'), link);
+        const newSource = nodeIdMapping[link.source];
+        const newTarget = nodeIdMapping[link.target];
+        if (!newSource || !newTarget) {
+          console.error(`Skipping link: missing mapping for source or target`);
+          continue;
+        }
+        // Remove the id field from the link object
+        const { id, ...linkData } = link;
+        await addDoc(collection(db, 'mindMaps', docRef.id, 'links'), {
+          ...linkData,
+          source: newSource,
+          target: newTarget
+        });
       }
       navigate(`/editor/${docRef.id}`);
     } catch (error) {

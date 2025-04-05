@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "predeploy": "npm run build", 
+    "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },
   "keywords": [],
@@ -31,6 +31,7 @@
     "@mui/material": "^7.0.1",
     "firebase": "^11.5.0",
     "html2canvas": "^1.4.1",
+    "lodash.throttle": "^4.1.1",
     "react-color": "^2.19.3",
     "react-draggable": "^4.4.6",
     "react-router-dom": "^7.4.1"
