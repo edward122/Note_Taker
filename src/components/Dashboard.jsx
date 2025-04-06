@@ -11,7 +11,8 @@ import {
   doc,
   setDoc,
   updateDoc,
-  arrayUnion
+  arrayUnion,
+  writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase/firebase';
@@ -217,44 +218,53 @@ const Dashboard = () => {
         throw new Error("Invalid file format");
       }
       const user = auth.currentUser;
-      const docRef = await addDoc(collection(db, 'mindMaps'), {
+      // Create the new mind map document.
+      const mindMapRef = await addDoc(collection(db, "mindMaps"), {
         title: file.name,
         userId: user.uid,
         createdAt: serverTimestamp()
       });
-      // Import nodes
-      const nodeIdMapping = {};
-      for (const node of data.nodes) {
-        const oldId = node.id; // preserve old ID for mapping
-        // Create a new document reference which generates a new ID
-        const newNodeRef = doc(collection(db, 'mindMaps', docRef.id, 'nodes'));
-        // Save the node data, overriding the "id" field with the new document ID
-        await setDoc(newNodeRef, { ...node, id: newNodeRef.id });
-        // Store mapping from the old node id to the new node id
-        nodeIdMapping[oldId] = newNodeRef.id;
-      }
 
-      // Now process the links using the mapping
-      for (const link of data.links) {
+      // Prepare a mapping from old node IDs to new node IDs.
+      const nodeIdMapping = {};
+
+      // Batch write for nodes.
+      const batchNodes = writeBatch(db);
+      data.nodes.forEach((node) => {
+        const oldId = node.id; // Preserve the original ID for mapping.
+        // Create a new document reference which generates a new ID.
+        const newNodeRef = doc(collection(db, "mindMaps", mindMapRef.id, "nodes"));
+        const newNodeData = { ...node, id: newNodeRef.id }; // Override id with new ID.
+        batchNodes.set(newNodeRef, newNodeData);
+        nodeIdMapping[oldId] = newNodeRef.id;
+      });
+      await batchNodes.commit();
+
+      // Batch write for links.
+      const batchLinks = writeBatch(db);
+      data.links.forEach((link) => {
         const newSource = nodeIdMapping[link.source];
         const newTarget = nodeIdMapping[link.target];
         if (!newSource || !newTarget) {
-          console.error(`Skipping link: missing mapping for source or target`);
-          continue;
+          console.error("Skipping link: missing mapping for source or target");
+          return;
         }
-        // Remove the id field from the link object
         const { id, ...linkData } = link;
-        await addDoc(collection(db, 'mindMaps', docRef.id, 'links'), {
+        const newLinkRef = doc(collection(db, "mindMaps", mindMapRef.id, "links"));
+        batchLinks.set(newLinkRef, {
           ...linkData,
           source: newSource,
           target: newTarget
         });
-      }
-      navigate(`/editor/${docRef.id}`);
+      });
+      await batchLinks.commit();
+
+      navigate(`/editor/${mindMapRef.id}`);
     } catch (error) {
       console.error("Error importing mind map:", error);
     }
   };
+
 
   return (
     <Box sx={{ p: 2, backgroundColor: '#121212', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>

@@ -190,12 +190,70 @@ const MindMapEditor = () => {
 
   const presetSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32];
   //const [fontSize, setFontSize] = useState(14);
+  const rightClickStartRef = useRef(null);
+  const [rightClickMoved, setRightClickMoved] = useState(false);
 
+
+
+
+  //useEffect(() => {
+  //  const outer = outerRef.current;
+  //  if (!outer) return;
+  //  outer.addEventListener("contextmenu", handleCanvasContextMenu);
+  //  return () => outer.removeEventListener("contextmenu", handleCanvasContextMenu);
+  //}, []);
+
+
+  const [contextMenuu, setContextMenu] = useState({ visible: false, x: 0, y: 0, type: null });
+  const closeContextMenu = () => setContextMenu({ visible: false, x: 0, y: 0, type: null });
   
+  // Handler for right-click on the canvas (outerRef)
+  const handleCanvasContextMenu = (e) => {
+    if (rightClickMoved) {
+      e.preventDefault();
+      //closeContextMenu();
+      return;
+    }
+   // e.preventDefault();
+    // Debug log to see if this handler is called
+    //console.log("Canvas contextmenu triggered", e.target);
+    // If the right-click target is not inside a node, show canvas menu
+    if (selectedNodes.length) {
+      setContextMenu({
+        visible: true,
+        x: e.clientX,
+        y: e.clientY,
+        type: "node"
+      });
+      return
+    };
+    if (!e.target.closest(".mindmap-node")) {
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+        y: e.clientY,
+      type: "canvas"
+    });
+    } else {
+      setContextMenu({
+        visible: true,
+        x: e.clientX,
+          y: e.clientY,
+        type: "node"
+      });
+    } 
+  };
 
+  const handleReset = () => {
+    // Reset pan and zoom.
+    setPan({ x: 0, y: 0 });
+    panRef.current = { x: 0, y: 0 };
+    setZoom(1);
+    zoomRef.current = 1;
+    console.log("Reset pan/zoom");
+    closeContextMenu();
+  };
 
-
-  
   const processKeyInteraction = (event) => {
     console.log("Processing key interaction:", event.key);
   };
@@ -665,23 +723,39 @@ const MindMapEditor = () => {
   // --- PANNING ---
   const handleContextMenu = (e) => {
     e.preventDefault();
+    
   };
 
+
+  
   const handleMouseDown = (e) => {
     if (e.button !== 2) return;
     e.preventDefault(); // prevent default behavior
-
+    console.log("Right-click detected");
+    //setRightClickMoved(false);
     panStart.current = { ...pan };
+    rightClickStartRef.current = { x: e.clientX, y: e.clientY };
     mouseStart.current = { x: e.clientX, y: e.clientY };
-
     // Function to update pan based on the current mouse position.
+    
     const updatePan = (moveEvent) => {
+      
+      const dx = moveEvent.clientX - mouseStart.current.x;
+      const dy = moveEvent.clientY - mouseStart.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance > 15) {
+      setRightClickMoved(true);
+      }
+      requestAnimationFrame(() => {
       const deltaX = moveEvent.clientX - mouseStart.current.x;
       const deltaY = moveEvent.clientY - mouseStart.current.y;
       const newX = panStart.current.x + deltaX;
       const newY = panStart.current.y + deltaY;
       setPan({ x: newX, y: newY });
       panRef.current = { x: newX, y: newY };
+      });
+      
     };
 
     // Throttle the updatePan function to run at most once every 16ms (~60fps)
@@ -728,9 +802,30 @@ const MindMapEditor = () => {
     }
   };
 
+  const doubleClickAddNode = async () => {
+    if (!mindMapId) return;
+    try {
+      const dropX = localCursor.x;
+      const dropY = localCursor.y;
+      // Convert the screen center to world coordinates using the latest pan/zoom.
+      await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+        text: "New Node",
+        x: dropX - DEFAULT_WIDTH/2,
+        y: dropY - DEFAULT_HEIGHT/2,
+        width: DEFAULT_WIDTH,
+        height: DEFAULT_HEIGHT,
+        lockedBy: null,
+        typing: false,
+      });
+    } catch (error) {
+      console.error("Error adding node:", error);
+    }
+  };
+
 
   const handleDoubleClick = (node) => {
     if (linkingMode) return;
+    if (node.type === "image") return;
     if (node.lockedBy && node.lockedBy !== currentUserEmail) {
       alert(`Node is currently locked by ${node.lockedBy}`);
       return;
@@ -802,7 +897,7 @@ const MindMapEditor = () => {
                     x: node.x + offset,
                     y: node.y + offset,
                   };
-                  const newNodeId = await duplicateNodeWithPosition(node, newPosition);
+                  const newNodeId = await duplicateNodeWithPosition1(node, newPosition);
                   if (newNodeId) {
                     groupUndoSnapshot[newNodeId] = { id: newNodeId, isNew: true };
                   }
@@ -943,7 +1038,7 @@ const MindMapEditor = () => {
     setSelectionBox(null);
   };
 
-  const duplicateNodeWithPosition = async (node, newPosition) => {
+  const duplicateNodeWithPosition1 = async (node, newPosition) => {
     if (!mindMapId) return null;
     // Destructure original node's id and data.
     const { id: originalNodeId, ...nodeData } = node;
@@ -997,6 +1092,71 @@ const MindMapEditor = () => {
     return newNodeId;
   };
 
+  const duplicateNodeWithPosition = async (node, newPosition, nodeIdMapping = null) => {
+    if (!mindMapId) return null;
+    // Destructure original node's id and data.
+    const { id: originalNodeId, ...nodeData } = node;
+    let newNodeId;
+    try {
+      const newDocRef = await addDoc(
+        collection(db, "mindMaps", mindMapId, "nodes"),
+        {
+          ...nodeData,
+          x: newPosition.x,
+          y: newPosition.y,
+          lockedBy: null,
+          typing: false,
+        }
+      );
+      newNodeId = newDocRef.id;
+      console.log("Duplicated node with new id:", newNodeId);
+
+      // Duplicate outgoing links.
+      const outgoingQuery = query(
+        collection(db, "mindMaps", mindMapId, "links"),
+        where("source", "==", originalNodeId)
+      );
+      const outgoingSnapshot = await getDocs(outgoingQuery);
+      for (const docSnap of outgoingSnapshot.docs) {
+        const linkData = docSnap.data();
+        // If we have a mapping and the target is part of the group copy, use its new id.
+        const newTarget = nodeIdMapping && nodeIdMapping[linkData.target] ? nodeIdMapping[linkData.target] : null;
+        // Only duplicate the link if the new target exists.
+        if (newTarget) {
+          await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+            ...linkData,
+            source: newNodeId,
+            target: newTarget,
+          });
+        }
+      }
+
+      // Duplicate incoming links.
+      const incomingQuery = query(
+        collection(db, "mindMaps", mindMapId, "links"),
+        where("target", "==", originalNodeId)
+      );
+      const incomingSnapshot = await getDocs(incomingQuery);
+      for (const docSnap of incomingSnapshot.docs) {
+        const linkData = docSnap.data();
+        const newSource = nodeIdMapping && nodeIdMapping[linkData.source] ? nodeIdMapping[linkData.source] : null;
+        if (newSource) {
+          await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+            ...linkData,
+            source: newSource,
+            target: newNodeId,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error duplicating node and links:", error);
+      return null;
+    }
+    // Return the new node's id for undo purposes.
+    return newNodeId;
+  };
+
+
   const handleDragOver = (e) => {
     e.preventDefault();
   };
@@ -1017,7 +1177,6 @@ const MindMapEditor = () => {
 
     const groupUndoSnapshot = {};
 
-    // If the file is a JSON file (mind map import)
     if (file.type === "application/json" || file.name.endsWith(".json")) {
       try {
         const text = await file.text();
@@ -1040,39 +1199,49 @@ const MindMapEditor = () => {
         const offsetY = dropY - groupCenterY;
 
         const nodeIdMapping = {};
-        for (const node of data.nodes) {
-          const oldId = node.id;
-          // Adjust the node's position with the computed offset.
+
+        // Batch write for nodes.
+        const batchNodes = writeBatch(db);
+        data.nodes.forEach((node) => {
+          const oldId = node.id; // preserve old ID for mapping
+          const newNodeRef = doc(collection(db, "mindMaps", mindMapId, "nodes"));
           const newNodeData = {
             ...node,
             x: node.x + offsetX,
             y: node.y + offsetY,
+            id: newNodeRef.id, // override with new document id
           };
-          const newNodeRef = doc(collection(db, "mindMaps", mindMapId, "nodes"));
-          await setDoc(newNodeRef, { ...newNodeData, id: newNodeRef.id });
+          batchNodes.set(newNodeRef, newNodeData);
           nodeIdMapping[oldId] = newNodeRef.id;
           groupUndoSnapshot[newNodeRef.id] = { id: newNodeRef.id, isNew: true };
-        }
+        });
+        await batchNodes.commit();
 
-        for (const link of data.links) {
+        // Batch write for links.
+        const batchLinks = writeBatch(db);
+        data.links.forEach((link) => {
           const newSource = nodeIdMapping[link.source];
           const newTarget = nodeIdMapping[link.target];
           if (!newSource || !newTarget) {
             console.error("Skipping link: missing mapping for source or target");
-            continue;
+            return;
           }
           const { id, ...linkData } = link;
-          await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+          const linkRef = doc(collection(db, "mindMaps", mindMapId, "links"));
+          batchLinks.set(linkRef, {
             ...linkData,
             source: newSource,
             target: newTarget,
           });
-        }
-        console.log("Imported mind map JSON file at cursor position.");
+        });
+        await batchLinks.commit();
+
+        console.log("Imported mind map JSON file at cursor position using batch writes.");
       } catch (error) {
         console.error("Error importing mind map:", error);
       }
     }
+
     // Otherwise, if it's an image file, handle as an image node.
     else if (file.type.startsWith("image/")) {
       try {
@@ -1109,163 +1278,233 @@ const MindMapEditor = () => {
 
 
 
-  useEffect(() => {
-    const handleCopy = (e) => {
-      // Check that clipboardData exists
-      if (!e.clipboardData) {
-        console.error("Clipboard API not available on this event.");
-        return;
-      }
-      if (selectedNodes.length > 0) {
-        // Get the selected nodes data
-        const nodesToCopy = nodes.filter((n) => selectedNodes.includes(n.id));
-        const jsonData = JSON.stringify(nodesToCopy);
-        // Write data to the clipboard with our custom type and plain text fallback
+ 
+  const handleCopy = async (e) => {
+    if (editingNodeId) return;
+    // Get the selected nodes data
+    if (selectedNodes.length > 0) {
+      const nodesToCopy = nodes.filter((n) => selectedNodes.includes(n.id));
+      const jsonData = JSON.stringify(nodesToCopy);
+      // If the event has clipboardData (for instance, from a key event)
+      if (e.clipboardData) {
         e.clipboardData.setData("application/json", jsonData);
-        e.clipboardData.setData("text/plain", "Copied MindMap Nodes");
-        e.preventDefault(); // Prevent the default copy behavior
+        e.clipboardData.setData("text/plain", jsonData);
+        e.preventDefault();
         console.log("Copied nodes to clipboard:", nodesToCopy);
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        // Use navigator.clipboard.writeText if clipboardData is not available
+        try {
+          await navigator.clipboard.writeText(jsonData);
+          console.log("Copied nodes to clipboard via navigator.clipboard:", nodesToCopy);
+        } catch (err) {
+          console.error("Failed to copy nodes:", err);
+        }
+      } else {
+        console.error("Clipboard API not available.");
       }
-    };
-
+    }
+  };
+  
+   useEffect(() => {
     document.addEventListener("copy", handleCopy);
     return () => document.removeEventListener("copy", handleCopy);
   }, [selectedNodes, nodes]);
 
-  useEffect(() => {
-    const handlePaste = async (e) => {
-      e.preventDefault();
+  //useEffect(() => {
+  const handlePaste = async () => {
+    if (editingNodeId) return;
+    try {
+      closeContextMenu();
       let groupUndoSnapshot = {}; // Prepare an undo snapshot for pasted nodes
       let nodesData = null;
+      let imageHandled = false;
 
-      // Check if there is JSON data (from a copy event) in the clipboard.
-      try {
-        const clipboardData = e.clipboardData.getData("application/json");
-        if (clipboardData) {
-          nodesData = JSON.parse(clipboardData);
-          if (!Array.isArray(nodesData)) {
-            nodesData = [nodesData];
+      // If Clipboard API supports reading items
+      if (navigator.clipboard.read) {
+        const clipboardItems = await navigator.clipboard.read();
+        for (const item of clipboardItems) {
+          for (const type of item.types) {
+            if (type.startsWith("image/")) {
+              imageHandled = true;
+              const blob = await item.getType(type);
+              try {
+                const timestamp = Date.now();
+                const fileName = blob.name || "pastedImage.png";
+                const imagePath = `images/${timestamp}_${fileName}`;
+                const storageReference = storageRef(storage, imagePath);
+                await uploadBytes(storageReference, blob);
+                const downloadURL = await getDownloadURL(storageReference);
+
+                // Use current local cursor position for drop coordinates.
+                const dropX = localCursor.x;
+                const dropY = localCursor.y;
+
+                // Create the image node.
+                const docRef = await addDoc(
+                  collection(db, "mindMaps", mindMapId, "nodes"),
+                  {
+                    type: "image",
+                    imageUrl: downloadURL,
+                    storagePath: imagePath,
+                    x: dropX - (60 / zoomRef.current * 0.5),
+                    y: dropY - (DEFAULT_HEIGHT / zoomRef.current * 0.5),
+                    width: 60 / zoomRef.current,
+                    height: DEFAULT_HEIGHT / zoomRef.current,
+                    lockedBy: null,
+                    typing: false,
+                  }
+                );
+                if (docRef) {
+                  groupUndoSnapshot[docRef.id] = { id: docRef.id, isNew: true };
+                }
+              } catch (error) {
+                console.error("Error uploading pasted image:", error);
+              }
+              break; // Process only the first image found.
+            }
           }
         }
-      } catch (jsonError) {
-        console.error("Error parsing JSON from clipboard:", jsonError);
+
+        // If no image was handled, try to get clipboard text.
+      if (!imageHandled) {
+        const clipboardText = await navigator.clipboard.readText();
+        const trimmedText = clipboardText.trim();
+        if (trimmedText.startsWith("{") || trimmedText.startsWith("[")) {
+          try {
+            nodesData = JSON.parse(trimmedText);
+            if (!Array.isArray(nodesData)) {
+              nodesData = [nodesData];
+            }
+          } catch (jsonError) {
+            console.error("Error parsing JSON, falling back to plain text:", jsonError);
+            nodesData = null;
+          }
+        }
       }
-
-      // If no JSON data, fall back to image and plain text handlers.
-      if (!nodesData) {
-        // First check for images in the clipboard items.
-        const items = e.clipboardData.items;
-        let imageHandled = false;
-        for (const item of items) {
-          if (item.type.startsWith("image/")) {
-            imageHandled = true;
-            const blob = item.getAsFile();
-            
-            try {
-              const timestamp = Date.now();
-              const fileName = blob.name || "pastedImage.png";
-              const imagePath = `images/${timestamp}_${fileName}`;
-              const storageReference = storageRef(storage, imagePath);
-              await uploadBytes(storageReference, blob);
-              const downloadURL = await getDownloadURL(storageReference);
-
-              // Use current local cursor position for drop coordinates.
-              const dropX = localCursor.x;
-              const dropY = localCursor.y;
-
-              // Create the image node.
-              const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
-                type: "image",
-                imageUrl: downloadURL,
-                storagePath: imagePath,
-                x: dropX - 60 / zoomRef.current * .5,
-                y: dropY - DEFAULT_HEIGHT / zoomRef.current * .5,
-                width: 60 / zoomRef.current,
-                height: DEFAULT_HEIGHT / zoomRef.current,
-                lockedBy: null,
-                typing: false,
-              });
-              if (docRef) {
-                groupUndoSnapshot[docRef.id] = { id: docRef.id, isNew: true };
-              }
-            } catch (error) {
-              console.error("Error uploading pasted image:", error);
-            }
-          }
-        }
-        // If no image was handled, try plain text.
-        if (!imageHandled) {
-          const pastedText = e.clipboardData.getData("text");
-          if (pastedText && pastedText.trim() !== "") {
-            // Use current local cursor position for drop coordinates.
-            const dropX = localCursor.x;
-            const dropY = localCursor.y;
-            try {
-              const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
-                type: "text",
-                text: pastedText,
-                x: dropX - DEFAULT_WIDTH / zoomRef.current * .5,
-                y: dropY - DEFAULT_HEIGHT / zoomRef.current * .5,
-                width: DEFAULT_WIDTH / zoomRef.current,
-                height: DEFAULT_HEIGHT / zoomRef.current,
-                fontSize: Math.floor(14 / zoomRef.current * .5),
-                lockedBy: null,
-                typing: false,
-              });
-              if (docRef) {
-                groupUndoSnapshot[docRef.id] = { id: docRef.id, isNew: true };
-              }
-            } catch (error) {
-              console.error("Error creating text node from pasted text:", error);
-            }
-          }
-        }
       } else {
-        // If JSON data exists, assume it represents one or multiple nodes.
-        // Use current pan/zoom to compute the canvas center.
-        const currentPan = panRef.current;
-        const currentZoom = zoomRef.current;
-        const rect = outerRef.current.getBoundingClientRect();
-        const sidebarWidth = 250; // adjust as needed
-        const topBarHeight = 50;  // adjust as needed
-        const canvasWidth = rect.width - sidebarWidth;
-        const canvasHeight = rect.height - topBarHeight;
-        const centerScreenX = canvasWidth / 2;
-        const centerScreenY = canvasHeight / 2;
-        const centerWorldX = (centerScreenX - currentPan.x) / currentZoom;
-        const centerWorldY = (centerScreenY - currentPan.y) / currentZoom;
-
-        // Calculate bounding box for the copied nodes.
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        nodesData.forEach((node) => {
-          if (node.x < minX) minX = node.x;
-          if (node.y < minY) minY = node.y;
-          if (node.x > maxX) maxX = node.x;
-          if (node.y > maxY) maxY = node.y;
-        });
-        const groupCenterX = (minX + maxX) / 2;
-        const groupCenterY = (minY + maxY) / 2;
-        // Compute offset to center the group on the canvas.
-        const deltaX = centerWorldX - groupCenterX;
-        const deltaY = centerWorldY - groupCenterY;
-
-        // For each node in the copied data, create a new node with an offset.
-        await Promise.all(
-          nodesData.map(async (node) => {
-            const newPosition = { x: node.x + deltaX, y: node.y + deltaY };
-            const newNodeId = await duplicateNodeWithPosition(node, newPosition);
-            if (newNodeId) {
-              groupUndoSnapshot[newNodeId] = { id: newNodeId, isNew: true };
-            }
-          })
-        );
+      // Fallback using readText only.
+      const clipboardText = await navigator.clipboard.readText();
+      try {
+        nodesData = JSON.parse(clipboardText);
+        if (!Array.isArray(nodesData)) {
+          nodesData = [nodesData];
+        }
+      } catch {
+        nodesData = null;
       }
-      console.log("Group undo snapshot:", groupUndoSnapshot);
+      }
+
+      // If we got nodesData from JSON, process it:
+      if (nodesData) {
+        // Use the local cursor as the drop point.
+        const dropX = localCursor.x;
+        const dropY = localCursor.y;
+        if (nodesData.length === 1) {
+          const node = nodesData[0];
+          const nodeWidth = node.width || DEFAULT_WIDTH;
+          const nodeHeight = node.height || DEFAULT_HEIGHT;
+          const nodeCenterX = node.x + nodeWidth / 2;
+          const nodeCenterY = node.y + nodeHeight / 2;
+          // Compute offset so that node center aligns with localCursor
+          const deltaX = dropX - nodeCenterX;
+          const deltaY = dropY - nodeCenterY;
+
+          // Duplicate node with the offset applied
+          const newNodeId = await duplicateNodeWithPosition1(node, { x: node.x + deltaX, y: node.y + deltaY });
+          if (newNodeId) {
+            groupUndoSnapshot[newNodeId] = { id: newNodeId, isNew: true };
+          }
+        } else {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          nodesData.forEach((node) => {
+            if (node.x < minX) minX = node.x;
+            if (node.y < minY) minY = node.y;
+            if (node.x > maxX) maxX = node.x;
+            if (node.y > maxY) maxY = node.y;
+          });
+          // Compute the center of the copied nodes.
+          const groupCenterX = (minX + maxX) / 2;
+          const groupCenterY = (minY + maxY) / 2;
+          // Compute offset to center the group on the cursor.
+          const deltaX = dropX - groupCenterX;
+          const deltaY = dropY - groupCenterY;
+
+          const nodeIdMapping = {};
+          // First, duplicate each node and store its new id.
+          await Promise.all(
+            nodesData.map(async (node) => {
+              const newPosition = { x: node.x + deltaX, y: node.y + deltaY };
+              const newId = await duplicateNodeWithPosition(node, newPosition, {}); // Pass an empty mapping for now.
+              if (newId) {
+                nodeIdMapping[node.id] = newId;
+                groupUndoSnapshot[newId] = { id: newId, isNew: true };
+              }
+            })
+          );
+          // Now that we have the mapping, update each node's links by re-running duplicateNodeWithPosition.
+          // (Alternatively, you could duplicate links in a separate batch using nodeIdMapping.)
+          await Promise.all(
+            nodesData.map(async (node) => {
+              const newId = nodeIdMapping[node.id];
+              if (!newId) return;
+              // Now, duplicate outgoing links using the mapping.
+              const outgoingQuery = query(
+                collection(db, "mindMaps", mindMapId, "links"),
+                where("source", "==", node.id)
+              );
+              const outgoingSnapshot = await getDocs(outgoingQuery);
+              for (const docSnap of outgoingSnapshot.docs) {
+                const linkData = docSnap.data();
+                const newTarget = nodeIdMapping[linkData.target];
+                if (newTarget) {
+                  await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+                    ...linkData,
+                    source: newId,
+                    target: newTarget,
+                  });
+                }
+              }
+            })
+          );
+        }
+        // Calculate bounding box for the copied nodes.
+        
+      } else {
+      // If no nodesData, handle plain text paste as before.
+      const clipboardText = await navigator.clipboard.readText();
+      if (clipboardText.trim() !== "") {
+        const dropX = localCursor.x;
+        const dropY = localCursor.y;
+        try {
+          const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+            type: "text",
+            text: clipboardText,
+            x: dropX - (DEFAULT_WIDTH / zoomRef.current * 0.5),
+            y: dropY - (DEFAULT_HEIGHT / zoomRef.current * 0.5),
+            width: DEFAULT_WIDTH / zoomRef.current,
+            height: DEFAULT_HEIGHT / zoomRef.current,
+            fontSize: Math.floor(14 / zoomRef.current * 0.5),
+            lockedBy: null,
+            typing: false,
+          });
+          if (docRef) {
+            groupUndoSnapshot[docRef.id] = { id: docRef.id, isNew: true };
+          }
+        } catch (error) {
+          console.error("Error creating text node from pasted text:", error);
+        }
+      }
+      }
+
       if (Object.keys(groupUndoSnapshot).length > 0) {
         pushSelectionToUndoStack(groupUndoSnapshot);
       }
-    };
+    } catch (error) {
+      console.error("Error handling paste via context menu:", error);
+    }
+  };
 
+  useEffect(() => {
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
   }, [mindMapId, localCursor, panRef, zoomRef, outerRef, duplicateNodeWithPosition, pushSelectionToUndoStack]);
@@ -1489,6 +1728,73 @@ const MindMapEditor = () => {
   }, [tempBgColor, tempTextColor, tempFontSize, tempTextStyle, tempTextAlign, tempFontFamily, activeCustomizationNode]);
 
   const navigate = useNavigate();
+  const ContextMenu = () => {
+    if (!contextMenuu.visible) return null;
+    if (rightClickMoved) return null;
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: contextMenuu.y,
+          left: contextMenuu.x,
+          backgroundColor: "#333",
+          color: "#fff",
+          border: "1px solid #555",
+          borderRadius: "4px",
+          padding: "5px",
+          zIndex: 1000,
+          minWidth: "120px",
+          // Fixed size styling (could use percentages if needed, but here fixed px works for a menu)
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {contextMenuu.type === "canvas" && (
+          <>
+            <div className="context-menu-item"
+              style={{ padding: "4px 8px", cursor: "pointer" }}
+              onMouseDown={(e) => {
+                //e.preventDefault();
+                //e.stopPropagation();
+                handlePaste(e);
+              }}
+            >
+              Paste
+            </div>
+            <div className="context-menu-item"
+              style={{ padding: "4px 8px", cursor: "pointer" }}
+              onMouseDown={handleReset}
+            >
+              Reset
+            </div>
+          </>
+        )}
+        {contextMenuu.type === "node" && (
+          <div className="context-menu-item"
+            
+            onMouseDown={(e) => {
+              //e.preventDefault();
+              //e.stopPropagation();
+              handleCopy(e);
+            }}
+          >
+            Copy
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Make sure to close context menu on click anywhere.
+  useEffect(() => {
+    const handleClick = () => {
+      if (contextMenuu.visible) {
+        closeContextMenu();
+      }
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [contextMenuu.visible]);
+  
   return (
     <div
       style={{
@@ -1496,6 +1802,7 @@ const MindMapEditor = () => {
         height: "100vh",
         backgroundColor: "#121212",
         userSelect: "none",
+        cursor: (isDragging || rightClickMoved) ? "grabbing" : "unset"
       }}
       ref={outerRef}
       onContextMenu={(e) => e.preventDefault()}
@@ -1503,17 +1810,40 @@ const MindMapEditor = () => {
         if (e.target === outerRef.current) {
           handleOuterMouseDown(e);
           if (e.button !== 2) return;
+          
           handleMouseDown(e);
+          
+        }
+        
+      }}
+      onDoubleClick={(e) => {
+        if (e.target === outerRef.current) {
+          doubleClickAddNode();
         }
       }}
       onMouseMove={(e) => {
         //if (e.target === outerRef.current) {
+        
           handleOuterMouseMove(e);
         //}
       }}
       onMouseUp={(e) => {
         //if (e.target === outerRef.current) {
           handleOuterMouseUp(e);
+          if (e.button === 2) {
+            // Reset right-click tracking.
+            //rightClickStartRef.current = null;
+            // Optionally, you can reset rightClickMoved after a short delay.
+            //setTimeout(() => setRightClickMoved(false), 1000);
+            rightClickStartRef.current = null;
+            // Optionally, you can reset rightClickMoved after a short delay.
+            handleCanvasContextMenu(e);
+            if (rightClickMoved) {
+              setTimeout(() => setRightClickMoved(false), 0);
+              closeContextMenu();
+            }
+           // setRightClickMoved(false);
+          }
         //}
       }}
       onDragOver={handleDragOver}
@@ -2027,8 +2357,9 @@ const MindMapEditor = () => {
 
 
 
-
+        
       </div>
+      <ContextMenu />
     </div>
   );
   };

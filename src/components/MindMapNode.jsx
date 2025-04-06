@@ -76,7 +76,7 @@ const MindMapNode = memo(({
               ? "#333" 
               : "#1e1e1e",
           color: node.textColor || "#fff",
-          borderRadius: "4px",
+          borderRadius: "5%",
           cursor: "move",
           minWidth: "100px",
           width: node.width ? `${node.width}px` : `${DEFAULT_WIDTH}px`,
