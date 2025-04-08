@@ -8,9 +8,9 @@ import { ArrowDropUp, ArrowDropDown, Close } from "@mui/icons-material";
 // Replace this with your actual API integration.
 import { getDatabase, ref, get } from "firebase/database";
 
-const fetchApiKey = async () => {
+const fetchApiData = async (getWhat) => {
   const dbRealtime = getDatabase();
-  const apiKeyRef = ref(dbRealtime, "Settings/Key");
+  const apiKeyRef = ref(dbRealtime, `Settings/${getWhat}`);
   try {
     const snapshot = await get(apiKeyRef);
     if (snapshot.exists()) {
@@ -36,8 +36,10 @@ const ChatBox = ({
   const [chatLog, setChatLog] = useState([]);
   const callAIMindMapAPI = async (promptText) => {
 
-    const apiKey = await fetchApiKey();
-    console.log("Fetched OpenAI API key:", fetchedKey);
+    const apiKey = await fetchApiData("Key");
+    const apiContent = await fetchApiData("prompt1");
+    const apiModel = await fetchApiData("model");
+    const apiModelMax = await fetchApiData("modelMax");
     if (!apiKey) {
       console.error("No API key found. Ensure VITE_OPENAI_API_KEY is set.");
       throw new Error("API key missing");
@@ -49,20 +51,11 @@ const ChatBox = ({
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-3.5-turbo", // or "gpt-4" if available
+        model: apiModel, // or "gpt-4" if available
         messages: [
           {
             role: "system",
-            content:
-            "You are an expert mind map generator. When given a prompt, output complete valid JSON with two arrays: 'nodes' and 'links'. Each node should include at least an 'id' and a 'text' property. Each link should specify a parent-child relationship with 'source' and 'target'. " +
-            "Generate a deep, multi‑level mind map structured as follows: " +
-            "1. The root node represents the main topic. " +
-            "2. Create at least four subtopics as direct children of the root node. " +
-            "3. For each subtopic, create at least two additional child nodes: one that provides a brief explanation of what that subtopic is, and one that discusses its benefits, challenges, or examples. " +
-            "4. If the subtopic is complex, add an extra level of child nodes that give even more detailed explanations. " +
-            "5. Make sure that if you add any subtopic children then make sure the other subtopics have some as well. " +
-            "6. Ensure that each node has a 'parent' field. For the root node, set parent to null, and for all other nodes, include the id of its parent." +
-            "Output only valid JSON with no markdown or extra text.",
+            content: apiContent,
           },
           {
             role: "user",
@@ -70,7 +63,7 @@ const ChatBox = ({
           },
         ],
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: apiModelMax,
       }),
     });
 
