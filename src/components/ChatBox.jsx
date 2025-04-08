@@ -6,8 +6,23 @@ import { ArrowDropUp, ArrowDropDown, Close } from "@mui/icons-material";
 //import { db } from "../firebase/firebase";
 // Dummy API call that simulates generating a mind map JSON from a prompt.
 // Replace this with your actual API integration.
-import { getDatabase, ref } from "firebase/database";
+import { getDatabase, ref, get } from "firebase/database";
 
+const fetchApiKey = async () => {
+  const dbRealtime = getDatabase();
+  const apiKeyRef = ref(dbRealtime, "Settings/Key");
+  try {
+    const snapshot = await get(apiKeyRef);
+    if (snapshot.exists()) {
+      return snapshot.val(); // This is your actual API key as a string.
+    } else {
+      throw new Error("API key not found in database");
+    }
+  } catch (error) {
+    console.error("Error fetching API key:", error);
+    throw error;
+  }
+};
 
 const ChatBox = ({
   localCursor,
@@ -19,10 +34,9 @@ const ChatBox = ({
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatLog, setChatLog] = useState([]);
-  const dbRealtime = getDatabase();
   const callAIMindMapAPI = async (promptText) => {
 
-  const apiKey = ref(dbRealtime, `Settings/Key`);
+    const apiKey = await fetchApiKey();
     if (!apiKey) {
       console.error("No API key found. Ensure VITE_OPENAI_API_KEY is set.");
       throw new Error("API key missing");
