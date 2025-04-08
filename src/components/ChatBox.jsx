@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button, TextField } from "@mui/material";
 import { ArrowDropUp, ArrowDropDown, Close } from "@mui/icons-material";
 // Import your Firebase functions as needed
-import { collection, addDoc, writeBatch, doc } from "firebase/firestore";
-import { db } from "../firebase/firebase";
-
+//import { collection, addDoc, writeBatch, doc, getDocs } from "firebase/firestore";
+//import { db } from "../firebase/firebase";
 // Dummy API call that simulates generating a mind map JSON from a prompt.
 // Replace this with your actual API integration.
+import { getDatabase, ref, set, onValue, off } from "firebase/database";
 
 
 const ChatBox = ({
@@ -21,7 +21,8 @@ const ChatBox = ({
   const [chatLog, setChatLog] = useState([]);
 
   const callAIMindMapAPI = async (promptText) => {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    
+  const apiKey = ref(dbRealtime, `Settings/Key`);
     if (!apiKey) {
       console.error("No API key found. Ensure VITE_OPENAI_API_KEY is set.");
       throw new Error("API key missing");
