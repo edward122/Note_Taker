@@ -29,6 +29,7 @@ import { onAuthStateChanged } from "firebase/auth";
 
 import {deleteObject, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import MindMapNode from "./MindMapNode";
+import { computePyramidLayoutWithLevels  } from "./layoutUtils";
 import {
   Typography,
   Select,
@@ -49,7 +50,7 @@ import PaletteIcon from "@mui/icons-material/Palette";
 import { BlockPicker } from 'react-color';
 
 import "./new.css";
-
+import ChatBox from "./ChatBox";
 
 import FormatBoldIcon from "@mui/icons-material/FormatBold";
 import FormatItalicIcon from "@mui/icons-material/FormatItalic";
@@ -192,6 +193,7 @@ const MindMapEditor = () => {
   //const [fontSize, setFontSize] = useState(14);
   const rightClickStartRef = useRef(null);
   const [rightClickMoved, setRightClickMoved] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
 
 
@@ -506,6 +508,7 @@ const MindMapEditor = () => {
       setSelectionUndoStack((prev) => [...prev, deepSnapshot]);
       setSelectionRedoStack([]);
     }
+    
   };
 
   const pushSingleNodeToUndoStack = (node) => {
@@ -521,13 +524,16 @@ const MindMapEditor = () => {
   const handleUndoSelection = async () => {
     if (selectionUndoStack.length === 0) return;
 
-    // Get the last group snapshot from the undo stack.
+    // Get the last snapshot from the undo stack.
     const snapshot = selectionUndoStack[selectionUndoStack.length - 1];
     console.log("Undo snapshot:", snapshot);
 
+    // Determine if the snapshot is wrapped in a 'nodes' property.
+    const snapshotNodes = snapshot.nodes ? snapshot.nodes : snapshot;
+
     // Build a redo snapshot from the nodes in the snapshot.
     const redoSnapshot = {};
-    Object.keys(snapshot).forEach((id) => {
+    Object.keys(snapshotNodes).forEach((id) => {
       const node = nodes.find((n) => n.id === id);
       if (node) {
         redoSnapshot[id] = { ...node };
@@ -537,8 +543,8 @@ const MindMapEditor = () => {
 
     // Create a Firestore batch.
     const batch = writeBatch(db);
-    Object.keys(snapshot).forEach((id) => {
-      const undoData = snapshot[id];
+    Object.keys(snapshotNodes).forEach((id) => {
+      const undoData = snapshotNodes[id];
       const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
       if (undoData && undoData.isNew) {
         // If the node was created via paste/duplication, delete it.
@@ -557,7 +563,7 @@ const MindMapEditor = () => {
     }
 
     // Update local state: remove nodes that were marked as new.
-    setNodes((prev) => prev.filter((n) => !(snapshot[n.id] && snapshot[n.id].isNew)));
+    setNodes((prev) => prev.filter((n) => !(snapshotNodes[n.id] && snapshotNodes[n.id].isNew)));
 
     // Remove the last snapshot from the undo stack.
     setSelectionUndoStack((prev) => prev.slice(0, prev.length - 1));
@@ -1155,6 +1161,138 @@ const MindMapEditor = () => {
     // Return the new node's id for undo purposes.
     return newNodeId;
   };
+
+  const ensureParentProperty = (nodes, links) => {
+    const nodeMap = {};
+    nodes.forEach((node) => {
+      nodeMap[node.id] = node;
+    });
+    let modified = false;
+    // For each link, if the target node has no parent, assign it.
+    links.forEach((link) => {
+      const targetNode = nodeMap[link.target];
+      if (targetNode && (targetNode.parent === undefined || targetNode.parent === null)) {
+        targetNode.parent = link.source;
+        modified = true;
+      }
+    });
+    // For any node that still lacks a parent property, set it explicitly to null.
+    nodes.forEach((node) => {
+      if (node.parent === undefined) {
+        node.parent = null;
+        modified = true;
+      }
+    });
+    return { nodes, modified };
+  };
+
+  const mergeMindMapDataHandler = async (aiData, dropPosition) => {
+    if (!aiData.nodes || !aiData.links) return;
+    // Compute layout and levels using the new function.
+    const { nodes: fixedNodes, modified } = ensureParentProperty(aiData.nodes, aiData.links);
+    const { layout: computedLayout, levelMap } = computePyramidLayoutWithLevels(
+      fixedNodes,
+      aiData.links,
+      150,
+      800,
+      1.5
+    );
+    console.log("Computed layout:", computedLayout, "Level map:", levelMap);
+
+    // Calculate bounding box for computed layout.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    Object.values(computedLayout).forEach(({ x, y }) => {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    });
+    const groupCenterX = (minX + maxX) / 2;
+    const groupCenterY = (minY + maxY) / 2;
+    const offsetX = dropPosition.x - groupCenterX;
+    const offsetY = dropPosition.y - groupCenterY;
+
+    // Define a color palette.
+    const palette = ["#2C3E50", "#1ABC9C", "#3498DB", "#9B59B6", "#E74C3C"];
+
+    // Batch write for nodes.
+    const nodeIdMapping = {};
+    const undoMapping = {};
+    const batchNodes = writeBatch(db);
+    for (const node of fixedNodes) {
+      const newNodeRef = doc(collection(db, "mindMaps", mindMapId, "nodes"));
+      const layoutPos = computedLayout[node.id] || { x: 0, y: 0 };
+      const level = levelMap[node.id] || 0;
+      const colorIndex = level % palette.length;
+      const assignedBgColor = palette[colorIndex];
+      
+
+      // Optionally, adjust dimensions and font sizes.
+      let width = 100;
+      let height = 40;
+      let fontSize = 14;
+      if (level === 0) {
+        const textLength = node.text ? node.text.length : 0;
+        width = Math.max(180, textLength * 1.25);
+        height = Math.max(60, textLength * 1);
+        fontSize = 28;
+      } else {
+        // For other nodes, you might adjust based on text length.
+        const textLength = node.text ? node.text.length : 0;
+        width = Math.max(100, textLength * 1.1);
+        height = Math.max(45, textLength * 2);
+        //fontSize = Math.min(14, Math.floor(14 * (1000 / width)));
+      }
+
+      const newNodeData = {
+        ...node,
+        x: layoutPos.x + offsetX,
+        y: layoutPos.y + offsetY,
+        id: newNodeRef.id,
+        bgColor: node.bgColor || assignedBgColor,
+        textColor: node.textColor || "#ECF0F1",
+        width,
+        height,
+        fontSize,
+      };
+      //nodeIdMapping[node.id] = newNodeRef.id;
+      //nodeIdMapping[node.id] = { ...newNodeData };
+      nodeIdMapping[node.id] = newNodeRef.id;
+      undoMapping[newNodeRef.id] = {newNodeData, isNew: true};
+      //nodeIdMapping[`${node.id}-${index}`] = newNodeRef.id;
+      batchNodes.set(newNodeRef, newNodeData);
+    }
+    await batchNodes.commit();
+    
+    console.log("Undo snapshot (nodes):", nodeIdMapping);
+    const undoSnapshot = { nodes: { ...undoMapping } };
+    pushSelectionToUndoStack(undoSnapshot);
+
+    // Batch write for links.
+    const batchLinks = writeBatch(db);
+    for (const link of aiData.links) {
+      const newSource = nodeIdMapping[link.source];
+      const newTarget = nodeIdMapping[link.target];
+      if (!newSource || !newTarget) {
+        console.error("Skipping link: missing mapping for source or target");
+        continue;
+      }
+      const newLinkRef = doc(collection(db, "mindMaps", mindMapId, "links"));
+      batchLinks.set(newLinkRef, {
+        ...link,
+        source: newSource,
+        target: newTarget,
+      });
+    }
+    await batchLinks.commit();
+
+    
+
+    console.log("Merged AI-generated mind map at drop position:", dropPosition);
+  };
+
+
+
 
 
   const handleDragOver = (e) => {
@@ -1784,6 +1922,35 @@ const MindMapEditor = () => {
     );
   };
 
+  const getCanvasCenter = () => {
+    if (!outerRef.current) return { x: 0, y: 0 };
+
+    // Dimensions of the outer container
+    const rect = outerRef.current.getBoundingClientRect();
+
+    // Define fixed UI offsets (adjust these as needed)
+    const sidebarWidth = 250;
+    const topBarHeight = 50;
+
+    // Compute available canvas width/height
+    const canvasWidth = rect.width - sidebarWidth;
+    const canvasHeight = rect.height - topBarHeight;
+
+    // Find the center in screen coordinates.
+    // If your canvas starts after the sidebar and top bar,
+    // you might need to add them back in:
+    const centerScreenX = sidebarWidth + canvasWidth / 2;
+    const centerScreenY = topBarHeight + canvasHeight / 2;
+
+    // Convert the screen center to world coordinates:
+    const worldX = (centerScreenX - panRef.current.x) / zoomRef.current;
+    const worldY = (centerScreenY - panRef.current.y) / zoomRef.current;
+
+    return { x: worldX, y: worldY };
+  };
+
+
+
   // Make sure to close context menu on click anywhere.
   useEffect(() => {
     const handleClick = () => {
@@ -2354,12 +2521,20 @@ const MindMapEditor = () => {
             </svg>
           );
         })()}
+        
 
 
 
         
       </div>
       <ContextMenu />
+      <ChatBox
+        localCursor={localCursor}  // make sure this is updated by your mouse move handlers
+        canvasCenter={getCanvasCenter()}
+        mergeMindMapData={mergeMindMapDataHandler}
+        isChatOpen={isChatOpen}
+        setIsChatOpen={setIsChatOpen}
+      />
     </div>
   );
   };
