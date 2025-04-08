@@ -37,6 +37,7 @@ const ChatBox = ({
   const callAIMindMapAPI = async (promptText) => {
 
     const apiKey = await fetchApiKey();
+    console.log("Fetched OpenAI API key:", fetchedKey);
     if (!apiKey) {
       console.error("No API key found. Ensure VITE_OPENAI_API_KEY is set.");
       throw new Error("API key missing");
