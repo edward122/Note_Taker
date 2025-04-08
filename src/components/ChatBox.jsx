@@ -19,9 +19,9 @@ const ChatBox = ({
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatLog, setChatLog] = useState([]);
-
-  const callAIMindMapAPI = async (promptText) => {
   const dbRealtime = getDatabase();
+  const callAIMindMapAPI = async (promptText) => {
+
   const apiKey = ref(dbRealtime, `Settings/Key`);
     if (!apiKey) {
       console.error("No API key found. Ensure VITE_OPENAI_API_KEY is set.");
