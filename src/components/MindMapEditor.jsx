@@ -42,6 +42,9 @@ import {
   ToggleButtonGroup,
   Autocomplete,
   Box,
+  Paper,
+  Toolbar,
+  AppBar
 } from "@mui/material";
 import Draggable from "react-draggable";
 import PaletteIcon from "@mui/icons-material/Palette";
@@ -2155,24 +2158,21 @@ const MindMapEditor = () => {
   
   return (
     <div
-    style={{
-      backgroundColor: "#0F0F0F",
-      userSelect: "none",
-      cursor: isDragging || rightClickMoved ? "grabbing" : "unset",
-      height: "100vh",
-      position: "relative"
-    }}
+      style={{
+        // Remove inline backgroundColor to use the new.css gradient background.
+        userSelect: "none",
+        cursor: isDragging || rightClickMoved ? "grabbing" : "default",
+        height: "100vh",
+        position: "relative"
+      }}
       ref={outerRef}
       onContextMenu={(e) => e.preventDefault()}
       onMouseDown={(e) => {
         if (e.target === outerRef.current) {
           handleOuterMouseDown(e);
           if (e.button !== 2) return;
-          
           handleMouseDown(e);
-          
         }
-        
       }}
       onDoubleClick={(e) => {
         if (e.target === outerRef.current) {
@@ -2180,35 +2180,24 @@ const MindMapEditor = () => {
         }
       }}
       onMouseMove={(e) => {
-        //if (e.target === outerRef.current) {
-        
-          handleOuterMouseMove(e);
-        //}
+        handleOuterMouseMove(e);
       }}
       onMouseUp={(e) => {
-        //if (e.target === outerRef.current) {
-          handleOuterMouseUp(e);
-          if (e.button === 2) {
-            // Reset right-click tracking.
-            //rightClickStartRef.current = null;
-            // Optionally, you can reset rightClickMoved after a short delay.
-            //setTimeout(() => setRightClickMoved(false), 1000);
-            rightClickStartRef.current = null;
-            // Optionally, you can reset rightClickMoved after a short delay.
-            handleCanvasContextMenu(e);
-            if (rightClickMoved) {
-              setTimeout(() => setRightClickMoved(false), 0);
-              closeContextMenu();
-            }
-           // setRightClickMoved(false);
+        handleOuterMouseUp(e);
+        if (e.button === 2) {
+          rightClickStartRef.current = null;
+          handleCanvasContextMenu(e);
+          if (rightClickMoved) {
+            setTimeout(() => setRightClickMoved(false), 0);
+            closeContextMenu();
           }
-        //}
+        }
       }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
       {renderCursors()}
-      {/* Top Bar */}
+      {/* Top Toolbar */}
       <div
         style={{
           position: "fixed",
@@ -2216,11 +2205,12 @@ const MindMapEditor = () => {
           left: 0,
           right: 0,
           height: "50px",
-          backgroundColor: "#333",
+          backgroundColor: "rgba(29,32,34,0.9)", // Softer, semi-transparent dark background
           display: "flex",
           alignItems: "center",
-          padding: "0 10px",
-          zIndex: 300,
+          padding: "0 20px",
+          boxShadow: "0 2px 4px rgba(0, 0, 0, 0.4)",
+          zIndex: 300
         }}
       >
         <Button
@@ -2270,41 +2260,31 @@ const MindMapEditor = () => {
           </Typography>
         )}
       </div>
-
+  
       {/* Right Sidebar */}
-
-
-
-
-
-
-
       <div
         style={{
           position: "fixed",
-          top: 50,
-          right: 0,
+          top: 60,
+          right: 20,
           width: "250px",
-          height: "calc(100% - 50px)",
-          backgroundColor: "#333",
+          height: "calc(100% - 60px)",
+          backgroundColor: "rgba(29,32,34,0.9)", // Updated sidebar background to match toolbar
           padding: "20px",
           boxSizing: "border-box",
           zIndex: 300,
           overflowY: "auto",
+          borderRadius: "8px"
         }}
-        onClick={(e) => e.stopPropagation()} // Prevent outer container events
+        onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {activeCustomizationNode ? (
           <>
-
             <Typography variant="h6" style={{ marginBottom: "5px", color: "#fff", fontWeight: "bold" }}>
               Font
             </Typography>
-            <Box display="flex" alignItems="center" gap={1}
-
-              >
-              {/* Font Family */}
+            <Box display="flex" alignItems="center" gap={1}>
               <FormControl
                 variant="filled"
                 size="small"
@@ -2318,7 +2298,7 @@ const MindMapEditor = () => {
                   style={{
                     color: "#fff",
                     backgroundColor: "#444",
-                    width: "100%",
+                    width: "100%"
                   }}
                 >
                   <MenuItem value="cursive">Cursive</MenuItem>
@@ -2326,31 +2306,25 @@ const MindMapEditor = () => {
                   <MenuItem value="Arial">Arial</MenuItem>
                   <MenuItem value="Times New Roman">Times New Roman</MenuItem>
                   <MenuItem value="Courier New">Courier New</MenuItem>
-                  {/* Add more fonts as needed */}
                 </Select>
               </FormControl>
-              {/* Font Size */}
-
               <Autocomplete
                 freeSolo
                 options={presetSizes}
                 getOptionLabel={(option) => option.toString()}
                 value={tempFontSize}
                 onChange={(e, newValue) => {
-                  // newValue might be a number or a string
                   let parsed;
-                  if (typeof newValue === 'number') {
+                  if (typeof newValue === "number") {
                     parsed = newValue;
-                  } else if (typeof newValue === 'string' && newValue.trim() !== '') {
+                  } else if (typeof newValue === "string" && newValue.trim() !== "") {
                     parsed = parseInt(newValue, 10);
                   }
                   if (!isNaN(parsed)) {
                     setTempFontSize(parsed);
-                    //handleSidebarSave(); // Save instantly when a valid value is chosen
                   }
                 }}
                 onInputChange={(e, newInputValue) => {
-                  // Here we update the value as the user types, but we don't save immediately
                   const parsed = parseInt(newInputValue, 10);
                   if (!isNaN(parsed)) {
                     setTempFontSize(parsed);
@@ -2360,10 +2334,10 @@ const MindMapEditor = () => {
                   width: 10,
                   "& .MuiInputBase-root": {
                     backgroundColor: "#444",
-                    color: "#fff",
+                    color: "#fff"
                   },
                   "& .MuiOutlinedInput-notchedOutline": { border: "none" },
-                  "& .MuiAutocomplete-popupIndicator": { color: "#fff" },
+                  "& .MuiAutocomplete-popupIndicator": { color: "#fff" }
                 }}
                 renderInput={(params) => (
                   <TextField {...params} label="Font Size" variant="filled" InputLabelProps={{ style: { color: "#fff" } }} />
@@ -2372,19 +2346,14 @@ const MindMapEditor = () => {
                   marginBottom: "10px",
                   background: "#444",
                   color: "white",
-                  width: "40%",
+                  width: "40%"
                 }}
               />
-
             </Box>
-
-
-            {/* Bold, Italic, Underline Toggles */}
             <ToggleButtonGroup
               value={tempTextStyle}
               onChange={(e, newStyles) => {
                 setTempTextStyle(newStyles);
-                // Optionally, call handleSidebarSave() here for instant saving
               }}
               aria-label="text style"
               size="small"
@@ -2399,15 +2368,12 @@ const MindMapEditor = () => {
                 <FormatUnderlinedIcon />
               </ToggleButton>
             </ToggleButtonGroup>
-
-            {/* Text Alignment */}
             <ToggleButtonGroup
               value={tempTextAlign}
               exclusive
               onChange={(e, newAlign) => {
                 if (newAlign !== null) {
                   setTempTextAlign(newAlign);
-                  // Optionally, call handleSidebarSave() for instant saving
                 }
               }}
               aria-label="text alignment"
@@ -2423,14 +2389,20 @@ const MindMapEditor = () => {
                 <FormatAlignRightIcon />
               </ToggleButton>
             </ToggleButtonGroup>
-
-
-            <Typography variant="h6" style={{ marginBottom: "5px", color: "#fff", fontWeight: "bold",borderTop: '1px solid #fff', paddingTop: '10px' }}>
+            <Typography
+              variant="h6"
+              style={{
+                marginBottom: "5px",
+                color: "#fff",
+                fontWeight: "bold",
+                borderTop: "1px solid #fff",
+                paddingTop: "10px"
+              }}
+            >
               Topic
             </Typography>
-
             <Box display="flex" alignItems="center" gap={1}>
-              <Box component="span" sx={{ color: '#fff', fontSize: '0.9rem' }}>
+              <Box component="span" sx={{ color: "#fff", fontSize: "0.9rem" }}>
                 Background:
                 <input
                   type="color"
@@ -2439,13 +2411,13 @@ const MindMapEditor = () => {
                   style={{
                     width: 64,
                     height: 32,
-                    border: 'none',
-                    background: 'transparent',
-                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    padding: 0
                   }}
                 />
               </Box>
-              <Box component="span" sx={{ color: '#fff', fontSize: '0.9rem' }}>
+              <Box component="span" sx={{ color: "#fff", fontSize: "0.9rem" }}>
                 Font Color:
                 <input
                   type="color"
@@ -2454,24 +2426,20 @@ const MindMapEditor = () => {
                   style={{
                     width: 64,
                     height: 32,
-                    border: 'none',
-                    background: 'transparent',
-                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    padding: 0
                   }}
                 />
               </Box>
             </Box>
-
-
-
             <Button
               variant="contained"
               onClick={handleRemoveLinks}
-              style={{ marginRight: "10px", backgroundColor: "red", marginTop: '200%' }}
+              style={{ marginRight: "10px", backgroundColor: "red", marginTop: "200%" }}
             >
               Remove All Links
             </Button>
-
           </>
         ) : (
           <Typography variant="caption" style={{ color: "#fff" }}>
@@ -2479,16 +2447,18 @@ const MindMapEditor = () => {
           </Typography>
         )}
       </div>
+  
+      {/* Active Users Panel (only one instance now) */}
       <div
         style={{
           position: "fixed",
           top: 60,
-          right: 270,
+          right: 290,
           backgroundColor: "rgba(0,0,0,0.7)",
           color: "#fff",
           padding: "8px",
           borderRadius: "4px",
-          zIndex: 250,
+          zIndex: 250
         }}
       >
         <Typography variant="caption">Active Users:</Typography>
@@ -2498,33 +2468,9 @@ const MindMapEditor = () => {
           </div>
         ))}
       </div>
-
-
-
-
-      <div
-        style={{
-          position: "fixed",
-          top: 60,
-          right: 270,
-          backgroundColor: "rgba(0,0,0,0.7)",
-          color: "#fff",
-          padding: "8px",
-          borderRadius: "4px",
-          zIndex: 250,
-        }}
-      >
-        <Typography variant="caption">Active Users:</Typography>
-        {presenceUsers.map((user, index) => (
-          <div key={index}>
-            <Typography variant="caption">{user.email}</Typography>
-          </div>
-        ))}
-      </div>
-
-
-      
+  
       {renderCursors()}
+  
       {/* Canvas Container */}
       <div
         ref={containerRef}
@@ -2541,7 +2487,7 @@ const MindMapEditor = () => {
           height: ".1px",
           overflow: "visible",
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: "top left",
+          transformOrigin: "top left"
         }}
       >
         <svg
@@ -2552,35 +2498,33 @@ const MindMapEditor = () => {
             width: "100%",
             height: "100%",
             pointerEvents: "none",
-            overflow: "visible",
+            overflow: "visible"
           }}
         >
-           {visibleLinks.map((link) => {
-    // Find the corresponding nodes (if they’re already virtually rendered you could instead store their layout)
-    const sourceNode = nodes.find((n) => n.id === link.source);
-    const targetNode = nodes.find((n) => n.id === link.target);
-    if (!sourceNode || !targetNode) return null;
-    const sourceWidth = sourceNode.width || DEFAULT_WIDTH;
-    const sourceHeight = sourceNode.height || DEFAULT_HEIGHT;
-    const targetWidth = targetNode.width || DEFAULT_WIDTH;
-    const targetHeight = targetNode.height || DEFAULT_HEIGHT;
-    const x1 = sourceNode.x + sourceWidth / 2;
-    const y1 = sourceNode.y + sourceHeight / 2;
-    const x2 = targetNode.x + targetWidth / 2;
-    const y2 = targetNode.y + targetHeight / 2;
-    return (
-      <line
-        key={link.id}
-        x1={x1}
-        y1={y1}
-        x2={x2}
-        y2={y2}
-        stroke="#fff"
-        strokeWidth="2"
-      />
-    );
-  })}
-
+          {visibleLinks.map((link) => {
+            const sourceNode = nodes.find((n) => n.id === link.source);
+            const targetNode = nodes.find((n) => n.id === link.target);
+            if (!sourceNode || !targetNode) return null;
+            const sourceWidth = sourceNode.width || DEFAULT_WIDTH;
+            const sourceHeight = sourceNode.height || DEFAULT_HEIGHT;
+            const targetWidth = targetNode.width || DEFAULT_WIDTH;
+            const targetHeight = targetNode.height || DEFAULT_HEIGHT;
+            const x1 = sourceNode.x + sourceWidth / 2;
+            const y1 = sourceNode.y + sourceHeight / 2;
+            const x2 = targetNode.x + targetWidth / 2;
+            const y2 = targetNode.y + targetHeight / 2;
+            return (
+              <line
+                key={link.id}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="rgba(255, 255, 255, 0.29)"  // Subtle connector lines
+                strokeWidth="5"
+              />
+            );
+          })}
         </svg>
         {visibleNodes.map((node) => (
           <MindMapNode
@@ -2606,24 +2550,19 @@ const MindMapEditor = () => {
               if (editingNodeId === node.id) return false;
               setIsDragging(true);
               const rect = outerRef.current.getBoundingClientRect();
-              // Convert the cursor's screen position to world coordinates.
               const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
               const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
-              // Compute offset between cursor world position and node's world position.
               const offsetX = cursorWorldX - node.x;
               const offsetY = cursorWorldY - node.y;
               dragStartRef.current = {
                 offsetX,
                 offsetY,
                 initialX: node.x,
-                initialY: node.y,
+                initialY: node.y
               };
-              console.log(selectedNodes);
-              if (selectedNodes.length < 1 || selectedNodes.length < 2 ) {
-                //setSelectedNodes([node.id]);
+              if (selectedNodes.length < 1 || selectedNodes.length < 2) {
                 pushSingleNodeToUndoStack(node);
               }
-              // For multi-drag, capture initial positions.
               if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
                 if (Object.keys(multiDragStartRef.current).length === 0) {
                   selectedNodes.forEach((id) => {
@@ -2631,132 +2570,98 @@ const MindMapEditor = () => {
                     if (found) {
                       multiDragStartRef.current[id] = { x: found.x, y: found.y };
                     }
-                    
                   });
                 }
-              } 
+              }
             }}
             onDrag={(e, data) => {
               const rect = outerRef.current.getBoundingClientRect();
-              // Convert the current cursor position to world coordinates.
               const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
               const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
-              // Calculate the new world position by subtracting the offset.
               const newX = cursorWorldX - dragStartRef.current.offsetX;
               const newY = cursorWorldY - dragStartRef.current.offsetY;
-              // For group dragging, update group delta.
               if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
                 updateGroupDelta({
                   x: newX - dragStartRef.current.initialX,
-                  y: newY - dragStartRef.current.initialY,
+                  y: newY - dragStartRef.current.initialY
                 });
               } else {
-                // For single node dragging, update local state directly.
-                
                 setNodes((prev) =>
-                  prev.map((n) => (n.id === node.id ? { ...n, x: newX , y: newY } : n))
+                  prev.map((n) => (n.id === node.id ? { ...n, x: newX, y: newY } : n))
                 );
               }
             }}
             onStop={async (e, data) => {
               const rect = outerRef.current.getBoundingClientRect();
-              // Convert final cursor position to world coordinates.
               const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
               const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
               const finalX = cursorWorldX - dragStartRef.current.offsetX;
               const finalY = cursorWorldY - dragStartRef.current.offsetY;
-
-              // Calculate movement distance.
               const distance = Math.sqrt(
                 Math.pow(finalX - dragStartRef.current.initialX, 2) +
                   Math.pow(finalY - dragStartRef.current.initialY, 2)
               );
-              const threshold = 0.01; // adjust as needed
+              const threshold = 0.01;
               if (distance < threshold) {
                 setIsDragging(false);
                 return;
               }
-
-              // Push undo snapshot before updating.
               if (selectedNodes.length > 1) {
                 pushSelectionToUndoStack();
-              } //else {
-              //  pushSingleNodeToUndoStack(node);
-              //}
-              //pushSelectionToUndoStack();
-              // For multi-drag:
-              if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
                 const deltaX = finalX - dragStartRef.current.initialX;
                 const deltaY = finalY - dragStartRef.current.initialY;
                 const newPositions = {};
                 selectedNodes.forEach((id) => {
-                  console.log("1");
                   const startPos = multiDragStartRef.current[id];
-                  console.log(multiDragStartRef.current);
                   if (startPos) {
                     newPositions[id] = {
                       x: startPos.x + deltaX,
-                      y: startPos.y + deltaY,
+                      y: startPos.y + deltaY
                     };
                   }
                 });
                 setNodes((prev) =>
                   prev.map((n) =>
-                    
-                    selectedNodes.includes(n.id ) &&
-                    newPositions[n.id] &&
-                    n.id !== node.id // Skip already-updated node
+                    selectedNodes.includes(n.id) && newPositions[n.id] && n.id !== node.id
                       ? { ...n, x: newPositions[n.id].x, y: newPositions[n.id].y }
                       : n
                   )
                 );
                 const batch = writeBatch(db);
                 selectedNodes.forEach((id) => {
-                  console.log("2");
-                  if (newPositions[id] ) {
+                  if (newPositions[id]) {
                     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
                     batch.update(nodeRef, {
                       x: newPositions[id].x,
-                      y: newPositions[id].y,
+                      y: newPositions[id].y
                     });
                   }
                 });
                 try {
                   await batch.commit();
-                  console.log("Batch update successful");
                 } catch (error) {
                   console.error("Error updating nodes in batch:", error);
                 }
                 multiDragStartRef.current = {};
                 setGroupDelta({ x: 0, y: 0 });
               } else {
-                // For single node:
                 setNodes((prev) =>
                   prev.map((n) => (n.id === node.id ? { ...n, x: finalX, y: finalY } : n))
                 );
                 try {
                   const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
                   await updateDoc(nodeRef, { x: finalX, y: finalY });
-                  console.log("3");
-                  console.log("Updated node:", node.id, finalX, finalY);
                 } catch (error) {
                   console.error("Error updating node position:", error);
                 }
               }
-              
               setIsDragging(false);
             }}
           />
         ))}
-
-
         {selectionBox && (() => {
-          // Compute a proportional stroke width based on the box's dimensions.
-          // For example, use 2% of the average of the width and height,
-          // but ensure a minimum value (e.g., 1px).
           const avgDimension = (selectionBox.width + selectionBox.height) / 2;
           const computedStrokeWidth = Math.max(1, avgDimension * 0.02);
-
           return (
             <svg
               style={{
@@ -2766,7 +2671,7 @@ const MindMapEditor = () => {
                 width: selectionBox.width,
                 height: selectionBox.height,
                 pointerEvents: "none",
-                zIndex: 500,
+                zIndex: 500
               }}
             >
               <rect
@@ -2774,23 +2679,17 @@ const MindMapEditor = () => {
                 y="0"
                 width="100%"
                 height="100%"
-                fill="rgba(128,128,128,0.1)"  // slight gray fill
+                fill="rgba(128,128,128,0.1)"  // Light gray fill
                 stroke="white"
                 strokeWidth={computedStrokeWidth}
-                //strokeDasharray={`${computedStrokeWidth * 2} ${computedStrokeWidth * 2}`}
               />
             </svg>
           );
         })()}
-        
-
-
-
-        
       </div>
       <ContextMenu />
       <ChatBox
-        localCursor={localCursor}  // make sure this is updated by your mouse move handlers
+        localCursor={localCursor}
         canvasCenter={getCanvasCenter()}
         mergeMindMapData={mergeMindMapDataHandler}
         isChatOpen={isChatOpen}
@@ -2798,6 +2697,6 @@ const MindMapEditor = () => {
       />
     </div>
   );
-  };
+};  
 
   export default MindMapEditor;

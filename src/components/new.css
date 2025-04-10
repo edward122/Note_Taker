@@ -1,8 +1,9 @@
 html, body {
-  background-color: #0f0f0f;
+  /* A radial gradient gives a softer background with depth */
+  background: radial-gradient(circle at center, #1D2022 0%, #0f1011 100%);
   overflow: hidden;
   height: 100%;
   margin: 0;
   padding: 0;
-  userSelect: 'none'
+  user-select: none;
 }

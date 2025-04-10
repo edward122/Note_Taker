@@ -26,35 +26,44 @@ const MindMapNode = memo(({
   onStop,
   hoveredNodeId,
 }) => {
+  // Determine if node is selected or hovered.
   const isSelected = selectedNodes.includes(node.id);
   const isHovered = hoveredNodeId === node.id;
+  
+  // Calculate average dimensions for scaling effects.
   const averageDimension = ((node.width || DEFAULT_WIDTH) + (node.height || DEFAULT_HEIGHT)) / 2;
   const dynamicOutlineWidth = averageDimension * 0.02;
-  
-  // Ensure a minimum outline width (e.g., 2px)
-  const minOutlineWidth = 4;
+  const minOutlineWidth = 4; // Minimum outline width.
   const effectiveOutlineWidth = Math.max(dynamicOutlineWidth, minOutlineWidth);
-  
-  
-  // Calculate effective position for group dragging.
-  const effectiveX = selectedNodes.includes(node.id)
-    ? node.x + groupDelta.x
-    : node.x;
-  const effectiveY = selectedNodes.includes(node.id)
-    ? node.y + groupDelta.y
-    : node.y;
-  
 
-    let outlineStyle = "none";
-  if (isSelected) {
-    outlineStyle = `${effectiveOutlineWidth}px solid #8896DD`;
-  } else if (isHovered) {
-    outlineStyle = `${effectiveOutlineWidth}px solid white`;
-  }
-  
-  // Optionally, you can add an outline offset to separate the outline from the content.
-  const outlineOffset = effectiveOutlineWidth;
-  
+  // Instead of removing the outline when not selected, we always set:
+  // - outlineWidth: fixed (effectiveOutlineWidth)
+  // - outlineStyle: "solid"
+  // - outlineColor: blue for selected, white for hovered, transparent otherwise.
+  const computedOutlineColor = isSelected
+    ? "#8896DD"
+    : isHovered
+      ? "white"
+      : "transparent";
+
+  // Calculate effective position for group dragging.
+  const effectiveX = selectedNodes.includes(node.id) ? node.x + groupDelta.x : node.x;
+  const effectiveY = selectedNodes.includes(node.id) ? node.y + groupDelta.y : node.y;
+
+  // Default colors and fonts.
+  const defaultBgColor = node.bgColor || (linkingSource === node.id ? "#333" : "#472F2F");
+  const defaultTextColor = node.textColor || "#EAEAEA";
+
+  // Dynamic box shadow that scales with node size.
+  const shadowOffsetY = averageDimension * 0.03;
+  const shadowBlur = averageDimension * 0.1;
+
+  // Compute effective font size for dynamic text shadow.
+  const effectiveFontSize = node.fontSize ? parseFloat(node.fontSize) : 14;
+  const textShadowOffset = effectiveFontSize * 0.1; // 10% of font size.
+  const textShadowBlur = effectiveFontSize * 0.2;   // 20% of font size.
+  const textShadowStyle = `${textShadowOffset}px ${textShadowOffset}px ${textShadowBlur}px rgba(0, 0, 0, 0.7)`;
+
   return (
     <Draggable
       scale={zoom}
@@ -70,24 +79,20 @@ const MindMapNode = memo(({
           e.stopPropagation();
           handleNodeClick(node, e);
         }}
-        
         onDoubleClick={() => handleDoubleClick(node)}
         style={{
           position: "absolute",
           transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
-          padding: "5px",
-          //boxShadow: isHighlighted
-          //  ? "0 1px 10px 2px rgba(300,300,300,0.5)"
-          //  : "none",
+          padding: "10px", // Spacious padding.
           backgroundColor: node.bgColor 
-            ? node.bgColor 
-            : linkingSource === node.id 
-              ? "#333" 
-              : "#1e1e1e",
+          ? node.bgColor 
+          : linkingSource === node.id 
+            ? "#333" 
+            : "#1e1e1e",
           color: node.textColor || "#fff",
-          borderRadius: "5%",
-          cursor: "move",
-          minWidth: "100px",
+          borderRadius: "8px", // Consistent border radius.
+          cursor: "grab",      // Draggable cue.
+          minWidth: "120px",
           width: node.width ? `${node.width}px` : `${DEFAULT_WIDTH}px`,
           height: node.height ? `${node.height}px` : `${DEFAULT_HEIGHT}px`,
           overflow: "hidden",
@@ -98,11 +103,18 @@ const MindMapNode = memo(({
           textDecoration: node.textStyle && node.textStyle.includes("underline") ? "underline" : "none",
           fontWeight: node.textStyle && node.textStyle.includes("bold") ? "bold" : "normal",
           fontFamily: node.fontFamily || "cursive",
-          //border: borderStyle,
-          //border: isHighlighted ? "2px solid white" : "none",
-          outline: outlineStyle,
-          outlineOffset: outlineStyle !== "none" ? `${outlineOffset}px` : "0px",
-          //filter: "blur(1x)",
+          // Outline properties for fade-out effect.
+          outlineWidth: `${effectiveOutlineWidth}px`,
+          outlineStyle: "solid",
+          outlineColor: computedOutlineColor,
+          outlineOffset: `${effectiveOutlineWidth}px`,
+          transition: isSelected
+            ? "outline-color 0.25s ease-in-out, box-shadow 0.2s ease-in-out, background-color 0.15s ease-in-out, color 0.15s ease-in-out"
+            : "none",
+          // Dynamic box shadow.
+          boxShadow: `0 ${shadowOffsetY}px ${shadowBlur}px rgba(0, 0, 0, 0.5)`,
+          // Dynamic text shadow based on font size.
+          textShadow: textShadowStyle,
         }}
       >
         {editingNodeId === node.id ? (
@@ -117,15 +129,23 @@ const MindMapNode = memo(({
             style={{
               backgroundColor: "inherit",
               width: "100%",
-              height: "100%",
+              height: "107%",
               fontSize: "inherit",
               color: "inherit",
+              fontStyle: "inherit",
               fontFamily: "inherit",
               fontWeight: "inherit",
               textDecoration: "inherit",
               textAlign: "inherit",
               border: "none",
               outline: "none",
+              resize: "none",
+              textShadow: textShadowStyle,
+              padding: 0,           // Reset default padding
+              margin: 0,            // Reset any default margin
+              boxSizing: "border-box",// Ensure box-sizing consistency
+              //overscrollBehavior: "none",
+              //overflow: "hidden",
             }}
           />
         ) : node.type === "image" ? (
@@ -174,6 +194,7 @@ const MindMapNode = memo(({
             Typing...
           </div>
         )}
+        {/* Resize handle */}
         <div
           onMouseDown={(e) => handleResizeMouseDown(node, e)}
           style={{
@@ -185,7 +206,6 @@ const MindMapNode = memo(({
             opacity: 0.5,
             cursor: "nwse-resize",
             backgroundColor: "#ccc",
-            
           }}
         ></div>
       </div>
