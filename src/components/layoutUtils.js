@@ -79,8 +79,127 @@ export const computePyramidLayoutWithLevels = (
   
   
   
+ 
+export const computeRadialLayout = (
+  nodes,
+  links,
+  radiusStep = 100,
+  centerX = 400,
+  centerY = 300
+) => {
+  const levelMap = {};
+
+  // Recursive function to assign levels based on parent
+  const assignLevel = (node) => {
+    if (node.parent) {
+      if (levelMap[node.parent] === undefined) {
+        const parentNode = nodes.find(n => n.id === node.parent);
+        if (parentNode) {
+          assignLevel(parentNode);
+        } else {
+          levelMap[node.parent] = 0;
+        }
+      }
+      levelMap[node.id] = levelMap[node.parent] + 1;
+    } else {
+      levelMap[node.id] = 0;
+    }
+  };
+
+  nodes.forEach(node => {
+    if (levelMap[node.id] === undefined) {
+      assignLevel(node);
+    }
+  });
+
+  // Group nodes by their computed level.
+  const levels = {};
+  nodes.forEach(node => {
+    const level = levelMap[node.id];
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(node.id);
+  });
+
+  // Compute positions using polar coordinates.
+  const layout = {};
+  Object.keys(levels).forEach(levelKey => {
+    const level = parseInt(levelKey, 10);
+    const nodeIds = levels[level];
+    const count = nodeIds.length;
+    const radius = level * radiusStep;
+    const angleStep = (2 * Math.PI) / count;
+    let angle = 0;
+    nodeIds.forEach((nodeId) => {
+      const x = centerX + radius * Math.cos(angle);
+      const y = centerY + radius * Math.sin(angle);
+      layout[nodeId] = { x, y };
+      angle += angleStep;
+    });
+  });
+
+  return { layout, levelMap };
+};
+
   
   
   
-  
-  
+ 
+export const computeHorizontalTreeLayout = (
+  nodes,
+  links,
+  levelSpacing = 150,
+  baseHeight = 600,
+  heightScaleFactor = 1.5
+) => {
+  const levelMap = {};
+
+  // Recursive function that computes node level using parent's property.
+  const assignLevel = (node) => {
+    if (node.parent) {
+      if (levelMap[node.parent] === undefined) {
+        const parentNode = nodes.find(n => n.id === node.parent);
+        if (parentNode) {
+          assignLevel(parentNode);
+        } else {
+          levelMap[node.parent] = 0;
+        }
+      }
+      levelMap[node.id] = levelMap[node.parent] + 1;
+    } else {
+      levelMap[node.id] = 0;
+    }
+  };
+
+  nodes.forEach((node) => {
+    if (levelMap[node.id] === undefined) {
+      assignLevel(node);
+    }
+  });
+
+  // Group nodes by their computed level.
+  const levels = {};
+  nodes.forEach((node) => {
+    const level = levelMap[node.id];
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(node.id);
+  });
+
+  // Compute positions: x is determined by level; y is distributed vertically.
+  const layout = {};
+  Object.keys(levels).forEach((levelKey) => {
+    const level = parseInt(levelKey, 10);
+    const levelNodes = levels[level];
+    const count = levelNodes.length;
+    // Calculate effective height for vertical distribution.
+    const effectiveHeight = baseHeight * Math.pow(heightScaleFactor, level);
+    levelNodes.forEach((nodeId, index) => {
+      // Evenly distribute nodes vertically, then center them relative to baseHeight.
+      const rawY = (index + 1) / (count + 1) * effectiveHeight;
+      const y = rawY - effectiveHeight / 2 + baseHeight / 2;
+      const x = level * levelSpacing;
+      layout[nodeId] = { x, y };
+    });
+  });
+
+  return { layout, levelMap };
+};

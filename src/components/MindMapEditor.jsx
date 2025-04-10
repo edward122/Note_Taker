@@ -3,8 +3,6 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback  } from "react";
 import throttle from "lodash.throttle";
 
-
-
 //import Node from "/.Node.jsx";
 import { useNavigate } from 'react-router-dom';
 import { useParams } from "react-router-dom";
@@ -29,7 +27,7 @@ import { onAuthStateChanged } from "firebase/auth";
 
 import {deleteObject, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import MindMapNode from "./MindMapNode";
-import { computePyramidLayoutWithLevels  } from "./layoutUtils";
+import { computePyramidLayoutWithLevels, computeHorizontalTreeLayout, computeRadialLayout } from "./layoutUtils";
 import {
   Typography,
   Select,
@@ -103,6 +101,7 @@ const MindMapEditor = () => {
   const [localCursor, setLocalCursor] = useState({ x: 0, y: 0 });
   const [cursors, setCursors] = useState([]);
   const localCursorRef = useRef({ x: 0, y: 0 });
+  
 
   // Zoom and pan state for canvas
   const [zoom, setZoom] = useState(1);
@@ -523,15 +522,12 @@ const MindMapEditor = () => {
 
   const handleUndoSelection = async () => {
     if (selectionUndoStack.length === 0) return;
-
-    // Get the last snapshot from the undo stack.
+  
+    // Get the last snapshot
     const snapshot = selectionUndoStack[selectionUndoStack.length - 1];
-    console.log("Undo snapshot:", snapshot);
-
-    // Determine if the snapshot is wrapped in a 'nodes' property.
     const snapshotNodes = snapshot.nodes ? snapshot.nodes : snapshot;
-
-    // Build a redo snapshot from the nodes in the snapshot.
+  
+    // Build a redo snapshot before making changes (if needed)
     const redoSnapshot = {};
     Object.keys(snapshotNodes).forEach((id) => {
       const node = nodes.find((n) => n.id === id);
@@ -540,34 +536,61 @@ const MindMapEditor = () => {
       }
     });
     setSelectionRedoStack((prev) => [...prev, redoSnapshot]);
-
-    // Create a Firestore batch.
+  
+    // Create a single write batch for all operations
     const batch = writeBatch(db);
-    Object.keys(snapshotNodes).forEach((id) => {
+    
+    // For each node in the snapshot...
+    for (const id of Object.keys(snapshotNodes)) {
       const undoData = snapshotNodes[id];
       const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+      
       if (undoData && undoData.isNew) {
-        // If the node was created via paste/duplication, delete it.
+        // Delete the node.
         batch.delete(nodeRef);
+  
+        // Optionally, query for and add delete operations for associated links
+        // (Consider running these queries outside the loop so you’re not
+        //  awaiting for each node—collect them first then add to batch)
+        const outgoingQuery = query(
+          collection(db, "mindMaps", mindMapId, "links"),
+          where("source", "==", id)
+        );
+        const outgoingSnapshot = await getDocs(outgoingQuery);
+        outgoingSnapshot.docs.forEach((docSnap) => {
+          const linkRef = doc(db, "mindMaps", mindMapId, "links", docSnap.id);
+          batch.delete(linkRef);
+        });
+        
+        const incomingQuery = query(
+          collection(db, "mindMaps", mindMapId, "links"),
+          where("target", "==", id)
+        );
+        const incomingSnapshot = await getDocs(incomingQuery);
+        incomingSnapshot.docs.forEach((docSnap) => {
+          const linkRef = doc(db, "mindMaps", mindMapId, "links", docSnap.id);
+          batch.delete(linkRef);
+        });
+        
       } else if (undoData) {
-        // Otherwise, restore its previous state.
+        // Restore its previous state.
         batch.set(nodeRef, undoData, { merge: true });
       }
-    });
-
+    }
+  
+    // Now commit the batch once.
     try {
       await batch.commit();
       console.log("Batch undo successful");
     } catch (error) {
       console.error("Error during batch undo:", error);
     }
-
-    // Update local state: remove nodes that were marked as new.
+  
+    // Update local state: Remove nodes that were marked as new.
     setNodes((prev) => prev.filter((n) => !(snapshotNodes[n.id] && snapshotNodes[n.id].isNew)));
-
-    // Remove the last snapshot from the undo stack.
     setSelectionUndoStack((prev) => prev.slice(0, prev.length - 1));
   };
+  
 
   const handleRedoSelection = async () => {
     if (selectionRedoStack.length === 0) return;
@@ -765,7 +788,7 @@ const MindMapEditor = () => {
     };
 
     // Throttle the updatePan function to run at most once every 16ms (~60fps)
-    const throttledUpdatePan = throttle(updatePan, 8);
+    const throttledUpdatePan = throttle(updatePan, 16);
 
     document.addEventListener("mousemove", throttledUpdatePan);
     document.addEventListener("mouseup", function handleMouseUp() {
@@ -803,6 +826,7 @@ const MindMapEditor = () => {
         lockedBy: null,
         typing: false,
       });
+      
     } catch (error) {
       console.error("Error adding node:", error);
     }
@@ -823,6 +847,7 @@ const MindMapEditor = () => {
         lockedBy: null,
         typing: false,
       });
+
     } catch (error) {
       console.error("Error adding node:", error);
     }
@@ -919,6 +944,66 @@ const MindMapEditor = () => {
         })();
       }
 
+      if (e.key.toLowerCase() === "f") {
+        if (selectedNodes.length === 0) return;
+        const selected = nodes.filter((n) => selectedNodes.includes(n.id));
+        if (!selected.length) return;
+  
+        // Compute the bounding box for all selected nodes.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        selected.forEach((node) => {
+          const width = node.width || DEFAULT_WIDTH;
+          const height = node.height || DEFAULT_HEIGHT;
+          minX = Math.min(minX, node.x);
+          minY = Math.min(minY, node.y);
+          maxX = Math.max(maxX, node.x + width);
+          maxY = Math.max(maxY, node.y + height);
+        });
+  
+        // Center of the bounding box in world coordinates.
+        const targetCenterWorld = { 
+          x: (minX + maxX) / 2, 
+          y: (minY + maxY) / 2 
+        };
+  
+        // Get the outer container dimensions.
+        const outerRect = outerRef.current.getBoundingClientRect();
+        // Adjust canvas area: subtract sidebar and top bar dimensions.
+        const sidebarWidth = -125;
+        const topBarHeight = 50;
+        const canvasWidth = outerRect.width - sidebarWidth;
+        const canvasHeight = outerRect.height - topBarHeight;
+  
+        // For focusing, we want to fill ~80% of the available canvas area.
+        const marginFactor = 0.8;
+        const boxWidth = maxX - minX;
+        const boxHeight = maxY - minY;
+        const zoomX = (canvasWidth * marginFactor) / boxWidth;
+        const zoomY = (canvasHeight * marginFactor) / boxHeight;
+        const newZoom = Math.min(zoomX, zoomY, MAX_ZOOM);
+  
+        // Compute the canvas center in screen coordinates.
+        // (Note that the canvas area starts at x = sidebarWidth, y = topBarHeight)
+        const canvasCenterScreen = {
+          x: sidebarWidth + canvasWidth / 2,
+          y: topBarHeight + canvasHeight / 2,
+        };
+  
+        // For the world coordinate targetCenterWorld to appear at canvasCenterScreen,
+        // the new pan offset needs to be:
+        const newPan = {
+          x: canvasCenterScreen.x - targetCenterWorld.x * newZoom,
+          y: canvasCenterScreen.y - targetCenterWorld.y * newZoom,
+        };
+  
+        // Update zoom and pan state and refs.
+        setZoom(newZoom);
+        zoomRef.current = newZoom;
+        setPan(newPan);
+        panRef.current = newPan;
+      }
+    
+
 
       if (
         !editingNodeId &&
@@ -926,33 +1011,55 @@ const MindMapEditor = () => {
         (e.key === "Backspace" || e.key === "Delete")
       ) {
         e.preventDefault();
-        if (
-          window.confirm("Are you sure you want to delete the selected nodes?")
-        ) {
-          pushSelectionToUndoStack(); // capture state before deletion
-          for (const id of selectedNodes) {
-            const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
-
-            // Retrieve the node (if not already available)
-            const node = nodes.find((n) => n.id === id);
-
-            // If the node is an image node and has a storagePath, delete the file from Storage
-            if (node?.type === "image" && node.storagePath) {
-              const fileRef = storageRef(storage, node.storagePath);
-              try {
-                 deleteObject(fileRef);
-                console.log(`Deleted image from storage at ${node.storagePath}`);
-              } catch (error) {
-                console.error("Error deleting image from storage:", error);
-              }
+        if (window.confirm("Are you sure you want to delete the selected nodes?")) {
+          // Push snapshot for undo before deletion
+          pushSelectionToUndoStack();
+      
+          // Use an asynchronous function to allow await
+          (async () => {
+            const batch = writeBatch(db);
+      
+            // Delete nodes and queue deletion of related links
+            for (const id of selectedNodes) {
+              // Delete the node document.
+              const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+              batch.delete(nodeRef);
+      
+              // Query outgoing links (node is source)
+              const outgoingQuery = query(
+                collection(db, "mindMaps", mindMapId, "links"),
+                where("source", "==", id)
+              );
+              const outgoingSnapshot = await getDocs(outgoingQuery);
+              outgoingSnapshot.docs.forEach((docSnap) => {
+                const linkRef = doc(db, "mindMaps", mindMapId, "links", docSnap.id);
+                batch.delete(linkRef);
+              });
+      
+              // Query incoming links (node is target)
+              const incomingQuery = query(
+                collection(db, "mindMaps", mindMapId, "links"),
+                where("target", "==", id)
+              );
+              const incomingSnapshot = await getDocs(incomingQuery);
+              incomingSnapshot.docs.forEach((docSnap) => {
+                const linkRef = doc(db, "mindMaps", mindMapId, "links", docSnap.id);
+                batch.delete(linkRef);
+              });
             }
-
-            // Then delete the node from Firestore
-            deleteDoc(nodeRef).catch(console.error);
-          }
-          // Optimistically update local state:
-          setNodes((prev) => prev.filter((n) => !selectedNodes.includes(n.id)));
-          setSelectedNodes([]);
+      
+            // Commit the batch.
+            try {
+              await batch.commit();
+              console.log("Batch deletion (nodes and links) successful");
+            } catch (error) {
+              console.error("Error deleting nodes and links:", error);
+            }
+      
+            // Update local state: Remove deleted nodes.
+            setNodes((prev) => prev.filter((n) => !selectedNodes.includes(n.id)));
+            setSelectedNodes([]);
+          })();
         }
       }
 
@@ -972,6 +1079,15 @@ const MindMapEditor = () => {
 
   // For mouse down (start selection):
   // Mouse handlers attached to the outer container:
+  const rectsIntersect = (rect1, rect2) => {
+    return (
+      rect1.x < rect2.x + rect2.width &&
+      rect1.x + rect1.width > rect2.x &&
+      rect1.y < rect2.y + rect2.height &&
+      rect1.y + rect1.height > rect2.y
+    );
+  };
+
   const handleOuterMouseDown = (e) => {
     if (isDragging) return;
     if (e.button !== 0) return; // left click only
@@ -1001,22 +1117,46 @@ const MindMapEditor = () => {
     const y = Math.min(selectionBox.startY, currentY);
     const width = Math.abs(currentX - selectionBox.startX);
     const height = Math.abs(currentY - selectionBox.startY);
-    setSelectionBox({ ...selectionBox, x, y, width, height });
+    const newBox = { ...selectionBox, x, y, width, height };
+  
+    // Update the selection box state.
+    setSelectionBox(newBox);
+
+    const newSelection = visibleNodes
+    .filter((node) => {
+      const nodeRect = {
+        x: node.x,
+        y: node.y,
+        width: node.width || DEFAULT_WIDTH,
+        height: node.height || DEFAULT_HEIGHT,
+      };
+      return rectsIntersect(nodeRect, newBox);
+    })
+    .map((n) => n.id);
+    
+    if (selectedNodes != newSelection) {
+      setSelectedNodes(newSelection);
+    }
+    //setSelectedNodes(newSelection);
+  // Update selection instantly. For multi-select vs. single select,
+  // you could merge the toggle logic if needed; here we simply replace the selection.
   };
 
   const handleOuterMouseUp = (e) => {
     if (!selectionBox) return;
+    //setSelectionBox(null);
+    //return;
     // Determine which nodes are within the selection box.
     // (This example uses full containment; you may adjust to partial intersection.)
-    const newSelection = nodes
+    const newSelection = visibleNodes
       .filter((node) => {
         const nodeWidth = node.width || DEFAULT_WIDTH;
         const nodeHeight = node.height || DEFAULT_HEIGHT;
         return (
-          node.x >= selectionBox.x &&
-          node.x + nodeWidth <= selectionBox.x + selectionBox.width &&
-          node.y >= selectionBox.y &&
-          node.y + nodeHeight <= selectionBox.y + selectionBox.height
+          node.x < selectionBox.x + selectionBox.width &&
+          node.x + node.width > selectionBox.x &&
+          node.y < selectionBox.y + selectionBox.height &&
+          node.y + node.height > selectionBox.y
         );
       })
       .map((n) => n.id);
@@ -1061,7 +1201,7 @@ const MindMapEditor = () => {
         }
       );
       newNodeId = newDocRef.id;
-      console.log("Duplicated node with new id:", newNodeId);
+      //console.log("Duplicated node with new id:", newNodeId);
 
       // Duplicate outgoing links.
       const outgoingQuery = query(
@@ -1115,7 +1255,7 @@ const MindMapEditor = () => {
         }
       );
       newNodeId = newDocRef.id;
-      console.log("Duplicated node with new id:", newNodeId);
+      //console.log("Duplicated node with new id:", newNodeId);
 
       // Duplicate outgoing links.
       const outgoingQuery = query(
@@ -1186,18 +1326,19 @@ const MindMapEditor = () => {
     return { nodes, modified };
   };
 
-  const mergeMindMapDataHandler = async (aiData, dropPosition) => {
+  const mergeMindMapDataHandler = async (aiData, dropPosition, whatLayout) => {
     if (!aiData.nodes || !aiData.links) return;
     // Compute layout and levels using the new function.
     const { nodes: fixedNodes, modified } = ensureParentProperty(aiData.nodes, aiData.links);
-    const { layout: computedLayout, levelMap } = computePyramidLayoutWithLevels(
-      fixedNodes,
-      aiData.links,
-      150,
-      800,
-      1.5
-    );
-    console.log("Computed layout:", computedLayout, "Level map:", levelMap);
+    const layoutResult = 
+  whatLayout === "bottomLay"
+    ? computePyramidLayoutWithLevels(fixedNodes, aiData.links, 150, 800, 1.5)
+    : whatLayout === "rightLay"
+    ? computeHorizontalTreeLayout(fixedNodes, aiData.links, 150, 800, 1.5)
+    : computeRadialLayout(fixedNodes, aiData.links, 150, 800, 1.5);
+
+    const { layout: computedLayout, levelMap } = layoutResult;
+    //console.log("Computed layout:", computedLayout, "Level map:", levelMap);
 
     // Calculate bounding box for computed layout.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1842,7 +1983,47 @@ const MindMapEditor = () => {
       });
   };
 
-
+  const getVisibleArea = () => {
+    if (!outerRef.current) {
+      return { visibleLeft: 0, visibleTop: 0, visibleWidth: 0, visibleHeight: 0 };
+    }
+    // get the container dimensions in screen coordinates
+    const rect = outerRef.current.getBoundingClientRect();
+    // Compute the world coordinates:
+    const visibleLeft = -pan.x / zoom;
+    const visibleTop = -pan.y / zoom;
+    const visibleWidth = rect.width / zoom;
+    const visibleHeight = rect.height / zoom;
+    return { visibleLeft, visibleTop, visibleWidth, visibleHeight };
+  };
+  
+  const visibleNodes = useMemo(() => {
+    // If outerRef is not available (e.g., on initial render) return all nodes.
+    if (!outerRef.current) return nodes;
+  
+    const { visibleLeft, visibleTop, visibleWidth, visibleHeight } = getVisibleArea();
+    // Buffer so nodes near the border are still rendered
+    const buffer = 100; // adjust as needed
+    
+    return nodes.filter((node) => {
+      const width = node.width || DEFAULT_WIDTH;
+      const height = node.height || DEFAULT_HEIGHT;
+      return (
+        node.x + width >= visibleLeft - buffer &&
+        node.x <= visibleLeft + visibleWidth + buffer &&
+        node.y + height >= visibleTop - buffer &&
+        node.y <= visibleTop + visibleHeight + buffer
+      );
+    });
+  }, [nodes, pan, zoom]); // outerRef.current is not a reactive dependency so assume it is stable
+  
+  const visibleLinks = useMemo(() => {
+    const visibleIds = new Set(visibleNodes.map((n) => n.id));
+    return links.filter(
+      (link) => visibleIds.has(link.source) || visibleIds.has(link.target)
+    );
+  }, [links, visibleNodes]);
+  
 
 
 
@@ -1962,15 +2143,25 @@ const MindMapEditor = () => {
     return () => document.removeEventListener("click", handleClick);
   }, [contextMenuu.visible]);
   
+
+
+
+
+
+
+
+
+
+  
   return (
     <div
-      style={{
-        position: "relative",
-        height: "100vh",
-        backgroundColor: "#121212",
-        userSelect: "none",
-        cursor: (isDragging || rightClickMoved) ? "grabbing" : "unset"
-      }}
+    style={{
+      backgroundColor: "#0F0F0F",
+      userSelect: "none",
+      cursor: isDragging || rightClickMoved ? "grabbing" : "unset",
+      height: "100vh",
+      position: "relative"
+    }}
       ref={outerRef}
       onContextMenu={(e) => e.preventDefault()}
       onMouseDown={(e) => {
@@ -2079,7 +2270,15 @@ const MindMapEditor = () => {
           </Typography>
         )}
       </div>
+
       {/* Right Sidebar */}
+
+
+
+
+
+
+
       <div
         style={{
           position: "fixed",
@@ -2299,6 +2498,32 @@ const MindMapEditor = () => {
           </div>
         ))}
       </div>
+
+
+
+
+      <div
+        style={{
+          position: "fixed",
+          top: 60,
+          right: 270,
+          backgroundColor: "rgba(0,0,0,0.7)",
+          color: "#fff",
+          padding: "8px",
+          borderRadius: "4px",
+          zIndex: 250,
+        }}
+      >
+        <Typography variant="caption">Active Users:</Typography>
+        {presenceUsers.map((user, index) => (
+          <div key={index}>
+            <Typography variant="caption">{user.email}</Typography>
+          </div>
+        ))}
+      </div>
+
+
+      
       {renderCursors()}
       {/* Canvas Container */}
       <div
@@ -2330,9 +2555,34 @@ const MindMapEditor = () => {
             overflow: "visible",
           }}
         >
-          {renderLinks}
+           {visibleLinks.map((link) => {
+    // Find the corresponding nodes (if they’re already virtually rendered you could instead store their layout)
+    const sourceNode = nodes.find((n) => n.id === link.source);
+    const targetNode = nodes.find((n) => n.id === link.target);
+    if (!sourceNode || !targetNode) return null;
+    const sourceWidth = sourceNode.width || DEFAULT_WIDTH;
+    const sourceHeight = sourceNode.height || DEFAULT_HEIGHT;
+    const targetWidth = targetNode.width || DEFAULT_WIDTH;
+    const targetHeight = targetNode.height || DEFAULT_HEIGHT;
+    const x1 = sourceNode.x + sourceWidth / 2;
+    const y1 = sourceNode.y + sourceHeight / 2;
+    const x2 = targetNode.x + targetWidth / 2;
+    const y2 = targetNode.y + targetHeight / 2;
+    return (
+      <line
+        key={link.id}
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        stroke="#fff"
+        strokeWidth="2"
+      />
+    );
+  })}
+
         </svg>
-        {nodes.map((node) => (
+        {visibleNodes.map((node) => (
           <MindMapNode
             key={node.id}
             node={node}
@@ -2368,7 +2618,11 @@ const MindMapEditor = () => {
                 initialX: node.x,
                 initialY: node.y,
               };
-              
+              console.log(selectedNodes);
+              if (selectedNodes.length < 1 || selectedNodes.length < 2 ) {
+                //setSelectedNodes([node.id]);
+                pushSingleNodeToUndoStack(node);
+              }
               // For multi-drag, capture initial positions.
               if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
                 if (Object.keys(multiDragStartRef.current).length === 0) {
@@ -2380,7 +2634,7 @@ const MindMapEditor = () => {
                     
                   });
                 }
-              }
+              } 
             }}
             onDrag={(e, data) => {
               const rect = outerRef.current.getBoundingClientRect();
@@ -2400,7 +2654,7 @@ const MindMapEditor = () => {
                 // For single node dragging, update local state directly.
                 
                 setNodes((prev) =>
-                  prev.map((n) => (n.id === node.id ? { ...n, x: newX, y: newY } : n))
+                  prev.map((n) => (n.id === node.id ? { ...n, x: newX , y: newY } : n))
                 );
               }
             }}
@@ -2424,7 +2678,11 @@ const MindMapEditor = () => {
               }
 
               // Push undo snapshot before updating.
-              
+              if (selectedNodes.length > 1) {
+                pushSelectionToUndoStack();
+              } //else {
+              //  pushSingleNodeToUndoStack(node);
+              //}
               //pushSelectionToUndoStack();
               // For multi-drag:
               if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
@@ -2432,7 +2690,9 @@ const MindMapEditor = () => {
                 const deltaY = finalY - dragStartRef.current.initialY;
                 const newPositions = {};
                 selectedNodes.forEach((id) => {
+                  console.log("1");
                   const startPos = multiDragStartRef.current[id];
+                  console.log(multiDragStartRef.current);
                   if (startPos) {
                     newPositions[id] = {
                       x: startPos.x + deltaX,
@@ -2442,14 +2702,18 @@ const MindMapEditor = () => {
                 });
                 setNodes((prev) =>
                   prev.map((n) =>
-                    selectedNodes.includes(n.id) && newPositions[n.id]
+                    
+                    selectedNodes.includes(n.id ) &&
+                    newPositions[n.id] &&
+                    n.id !== node.id // Skip already-updated node
                       ? { ...n, x: newPositions[n.id].x, y: newPositions[n.id].y }
                       : n
                   )
                 );
                 const batch = writeBatch(db);
                 selectedNodes.forEach((id) => {
-                  if (newPositions[id]) {
+                  console.log("2");
+                  if (newPositions[id] ) {
                     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
                     batch.update(nodeRef, {
                       x: newPositions[id].x,
@@ -2473,16 +2737,13 @@ const MindMapEditor = () => {
                 try {
                   const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
                   await updateDoc(nodeRef, { x: finalX, y: finalY });
+                  console.log("3");
                   console.log("Updated node:", node.id, finalX, finalY);
                 } catch (error) {
                   console.error("Error updating node position:", error);
                 }
               }
-              if (selectedNodes.length > 0) {
-                pushSelectionToUndoStack();
-              } else {
-                pushSingleNodeToUndoStack(node);
-              }
+              
               setIsDragging(false);
             }}
           />

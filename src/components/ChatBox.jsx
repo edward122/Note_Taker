@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Button, TextField } from "@mui/material";
+import { Button, TextField, ToggleButtonGroup, ToggleButton, styled } from "@mui/material";
 import { ArrowDropUp, ArrowDropDown, Close } from "@mui/icons-material";
+import FilterListIcon from '@mui/icons-material/FilterList';
+import BorderClearIcon from '@mui/icons-material/BorderClear';
+import Paper from '@mui/material/Paper';
 // Import your Firebase functions as needed
 //import { collection, addDoc, writeBatch, doc, getDocs } from "firebase/firestore";
 //import { db } from "../firebase/firebase";
 // Dummy API call that simulates generating a mind map JSON from a prompt.
 // Replace this with your actual API integration.
 import { getDatabase, ref, get } from "firebase/database";
+
+
 
 const fetchApiData = async (getWhat) => {
   const dbRealtime = getDatabase();
@@ -100,7 +105,7 @@ const ChatBox = ({
       const dropPosition = useCursorPosition
       ? localCursor // from MindMapEditor state
       : canvasCenter;
-      await mergeMindMapData(aiData, dropPosition);
+      await mergeMindMapData(aiData, dropPosition, view);
     } catch (error) {
       console.error("Error calling OpenAI API:", error);
       setChatLog((prev) => [
@@ -123,7 +128,7 @@ const ChatBox = ({
     handleSend(false); // true means "use cursor position"
     
   };
-
+  const [view, setView] = useState('bottomLay');
 
   return (
     <div
@@ -178,6 +183,41 @@ const ChatBox = ({
           </div>
         ))}
       </div>
+      <div  style={{width:"16%", marginLeft:"83%", marginTop:"22%", backgroundColor:"#404245", color:"white", borderRadius:"8px",position:"absolute"}}>
+        <paper
+        
+        >
+          
+      <ToggleButtonGroup
+                      value={view}
+                      exclusive
+                      onChange={(e, newAlign) => {
+                        if (newAlign !== null) {
+                          setView(newAlign);
+                          // Optionally, call handleSidebarSave() for instant saving
+                        }
+                      }}
+                      //style={backgroundColor:"red"}
+                      
+                      orientation="vertical"
+                      aria-label="text alignment"
+                      color="info"
+                      size="small"
+                      sx={{ mx: 0.5, my: .5 }}
+                      //onChange={handleChange}
+                    >
+                      <ToggleButton value="bottomLay" aria-label="bottomLay" style={{transform: "rotate(180deg)"}}>
+                        <FilterListIcon />
+                      </ToggleButton>
+                      <ToggleButton value="rightLay" aria-label="rightLay" style={{transform: "rotate(90deg)"}}>
+                        <FilterListIcon />
+                      </ToggleButton>
+                      <ToggleButton value="centerLay" aria-label="centerLay" >
+                        <BorderClearIcon />
+                      </ToggleButton>
+                    </ToggleButtonGroup>
+                    </paper>
+                    </div>
       <div style={{ padding: "7px", display: "flex" }}>
         <TextField
           value={prompt}
@@ -191,6 +231,7 @@ const ChatBox = ({
           }}
           fullWidth
         />
+         
         <Button
           variant="contained"
           onClick={onButtonClick}

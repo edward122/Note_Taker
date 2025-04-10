@@ -28,8 +28,13 @@ const MindMapNode = memo(({
 }) => {
   const isSelected = selectedNodes.includes(node.id);
   const isHovered = hoveredNodeId === node.id;
-  const averageDimension = ((node.width || 100) + (node.height || 40)) / 2;
-  const dynamicBorderWidth = Math.max(1, averageDimension * 0.02);
+  const averageDimension = ((node.width || DEFAULT_WIDTH) + (node.height || DEFAULT_HEIGHT)) / 2;
+  const dynamicOutlineWidth = averageDimension * 0.02;
+  
+  // Ensure a minimum outline width (e.g., 2px)
+  const minOutlineWidth = 4;
+  const effectiveOutlineWidth = Math.max(dynamicOutlineWidth, minOutlineWidth);
+  
   
   // Calculate effective position for group dragging.
   const effectiveX = selectedNodes.includes(node.id)
@@ -40,12 +45,16 @@ const MindMapNode = memo(({
     : node.y;
   
 
-  let outlineStyle = "none";
+    let outlineStyle = "none";
   if (isSelected) {
-    outlineStyle = `${dynamicBorderWidth}px solid #8896DD`;
+    outlineStyle = `${effectiveOutlineWidth}px solid #8896DD`;
   } else if (isHovered) {
-    outlineStyle = `${dynamicBorderWidth}px solid white`;
+    outlineStyle = `${effectiveOutlineWidth}px solid white`;
   }
+  
+  // Optionally, you can add an outline offset to separate the outline from the content.
+  const outlineOffset = effectiveOutlineWidth;
+  
   return (
     <Draggable
       scale={zoom}
@@ -89,10 +98,11 @@ const MindMapNode = memo(({
           textDecoration: node.textStyle && node.textStyle.includes("underline") ? "underline" : "none",
           fontWeight: node.textStyle && node.textStyle.includes("bold") ? "bold" : "normal",
           fontFamily: node.fontFamily || "cursive",
-          
+          //border: borderStyle,
           //border: isHighlighted ? "2px solid white" : "none",
           outline: outlineStyle,
-          outlineOffset: outlineStyle !== "none" ? `${dynamicBorderWidth}px` : "0px",
+          outlineOffset: outlineStyle !== "none" ? `${outlineOffset}px` : "0px",
+          //filter: "blur(1x)",
         }}
       >
         {editingNodeId === node.id ? (
