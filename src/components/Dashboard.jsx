@@ -267,12 +267,12 @@ const Dashboard = () => {
 
 
   return (
-    <Box sx={{ p: 2, backgroundColor: '#121212', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>
+    <Box sx={{ p: 2, backgroundColor: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>
       <Box sx={{ mb: 2 }}>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenNewMapDialog} sx={{ mr: 2 }}>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenNewMapDialog} sx={{ mr: 2, background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}>
           New Mind Map
         </Button>
-        <Button variant="contained" onClick={handleImportClick} sx={{ mr: 1 }}>
+        <Button variant="contained" onClick={handleImportClick} sx={{ mr: 1, background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}>
           Import Mind Map
         </Button>
         
@@ -280,7 +280,7 @@ const Dashboard = () => {
       <Grid container spacing={2} sx={{ mt: 2, margin:'100px 100px 100px 100px'} }>
         {mindMaps.map((mindMap) => (
           <Grid item xs={12} sm={6} md={4} key={mindMap.id}>
-            <Card sx={{ backgroundColor: '#262626', color: '#fff', padding:'20px 20px 20px 20px', borderRadius: '10px', border: "2px solid black", boxShadow: "0 1px 10px 2px rgba(360, 360,360, 0.5)" }}>
+            <Card sx={{ background: '#262626', color: '#fff', padding:'20px 20px 20px 20px', borderRadius: '10px', border: "none", boxShadow: "0 1px 10px 2px rgba(0, 0,0, 0.5)" }}>
               <CardContent onClick={() => handleCardClick(mindMap.id)} sx={{ cursor: 'pointer' }}>
                 <Typography variant="h6"sx={{fontWeight:"900"}}>{mindMap.title}</Typography>
               </CardContent>

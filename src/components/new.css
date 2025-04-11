@@ -1,5 +1,7 @@
 html, body {
-  /* A radial gradient gives a softer background with depth */
+  /* A radial gradient gives a softer background with depth 0C1218*/
+  /*background: radial-gradient(circle at center, #1D2022 0%, #0f1011 100%);*/
+  /*background: radial-gradient(circle at center, #1c2229 0%, #0C1218 100%);*/
   background: radial-gradient(circle at center, #1D2022 0%, #0f1011 100%);
   overflow: hidden;
   height: 100%;

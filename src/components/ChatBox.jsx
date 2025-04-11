@@ -138,10 +138,10 @@ const ChatBox = ({
         left: "0",
         width: "300px",
         height: "300px",
-        backgroundColor: "#222",
+        background: "radial-gradient(circle at center,rgba(29, 32, 34, 0.66) 0%, #0f1011 100%)",
         color: "#fff",
         borderTopRightRadius: "8px",
-        border: "1px solid #444",
+        //border: "1px solid #444",
         transition: "bottom 0.3s ease",
         display: "flex",
         flexDirection: "column",
@@ -154,7 +154,7 @@ const ChatBox = ({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "4px 8px",
-          backgroundColor: "#333",
+          background: "radial-gradient(circle at center,rgba(29, 32, 34, 0.66) 0%,rgb(27, 29, 31) 100%)",
           borderTopRightRadius: "8px",
         }}
       >
@@ -183,7 +183,7 @@ const ChatBox = ({
           </div>
         ))}
       </div>
-      <div  style={{width:"16%", marginLeft:"83%", marginTop:"22%", backgroundColor:"#404245", color:"white", borderRadius:"8px",position:"absolute"}}>
+      <div  style={{width:"16%", marginLeft:"83%", marginTop:"22%", background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)", color:"white", borderRadius:"8px",position:"absolute"}}>
         <paper
         
         >
@@ -203,7 +203,7 @@ const ChatBox = ({
                       aria-label="text alignment"
                       color="info"
                       size="small"
-                      sx={{ mx: 0.5, my: .5 }}
+                      sx={{ mx: 0.5, my: .5, background: "radial-gradient(circle at center,rgba(36, 39, 43, 0.5) 0%,rgba(108, 115, 121, 0.73) 130%)" }}
                       //onChange={handleChange}
                     >
                       <ToggleButton value="bottomLay" aria-label="bottomLay" style={{transform: "rotate(180deg)"}}>
@@ -227,7 +227,7 @@ const ChatBox = ({
           size="small"
           placeholder="Enter prompt..."
           InputProps={{
-            style: { backgroundColor: "#333", color: "#fff" },
+            style: { background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)", color: "#fff" },
           }}
           fullWidth
         />
@@ -236,7 +236,7 @@ const ChatBox = ({
           variant="contained"
           onClick={onButtonClick}
           disabled={loading}
-          style={{ marginLeft: "4px" }}
+          style={{ marginLeft: "4px", background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}
         >
           {loading ? "..." : "Send"}
         </Button>

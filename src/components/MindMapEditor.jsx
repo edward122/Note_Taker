@@ -44,7 +44,8 @@ import {
   Box,
   Paper,
   Toolbar,
-  AppBar
+  AppBar,
+  Stack
 } from "@mui/material";
 import Draggable from "react-draggable";
 import PaletteIcon from "@mui/icons-material/Palette";
@@ -762,8 +763,14 @@ const MindMapEditor = () => {
   
   const handleMouseDown = (e) => {
     if (e.button !== 2) return;
-    e.preventDefault(); // prevent default behavior
-    console.log("Right-click detected");
+    if (
+      document.activeElement.tagName === "INPUT" ||
+      document.activeElement.tagName === "TEXTAREA"
+    ) {} else {
+      e.preventDefault();
+    }
+    //e.preventDefault(); // prevent default behavior
+    // console.log("Right-click detected");
     //setRightClickMoved(false);
     panStart.current = { ...pan };
     rightClickStartRef.current = { x: e.clientX, y: e.clientY };
@@ -978,7 +985,7 @@ const MindMapEditor = () => {
         const canvasHeight = outerRect.height - topBarHeight;
   
         // For focusing, we want to fill ~80% of the available canvas area.
-        const marginFactor = 0.8;
+        const marginFactor = 0.6;
         const boxWidth = maxX - minX;
         const boxHeight = maxY - minY;
         const zoomX = (canvasWidth * marginFactor) / boxWidth;
@@ -2186,11 +2193,16 @@ const MindMapEditor = () => {
         handleOuterMouseUp(e);
         if (e.button === 2) {
           rightClickStartRef.current = null;
+          if (
+            document.activeElement.tagName === "INPUT" ||
+            document.activeElement.tagName === "TEXTAREA"
+          ) return;
           handleCanvasContextMenu(e);
           if (rightClickMoved) {
             setTimeout(() => setRightClickMoved(false), 0);
             closeContextMenu();
           }
+          
         }
       }}
       onDragOver={handleDragOver}
@@ -2206,6 +2218,7 @@ const MindMapEditor = () => {
           right: 0,
           height: "50px",
           backgroundColor: "rgba(29,32,34,0.9)", // Softer, semi-transparent dark background
+          background: "radial-gradient(circle at center, rgba(29,32,34,.4) 0%, rgba(15,16,17,.7) 100%)",
           display: "flex",
           alignItems: "center",
           padding: "0 20px",
@@ -2216,14 +2229,14 @@ const MindMapEditor = () => {
         <Button
           variant="contained"
           onClick={() => navigate(`/dashboard`)}
-          style={{ marginRight: "10px" }}
+          style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           <ArrowBackIosIcon />
         </Button>
         <Button
           variant="contained"
           onClick={handleAddNode}
-          style={{ marginRight: "10px" }}
+          style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Add Node
         </Button>
@@ -2233,25 +2246,25 @@ const MindMapEditor = () => {
             setLinkingMode((prev) => !prev);
             setLinkingSource(null);
           }}
-          style={{ marginRight: "10px" }}
+          style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           {linkingMode ? "Exit Linking Mode" : "Link Nodes"}
         </Button>
         <Button
           variant="contained"
           onClick={handleExport}
-          style={{ marginRight: "10px" }}
+          style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Export
         </Button>
         <Button
           variant="contained"
           onClick={handleZoomIn}
-          style={{ marginRight: "10px" }}
+          style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Zoom In
         </Button>
-        <Button variant="contained" onClick={handleZoomOut}>
+        <Button variant="contained" onClick={handleZoomOut} style={{background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)"}}>
           Zoom Out
         </Button>
         {linkingMode && (
@@ -2263,190 +2276,281 @@ const MindMapEditor = () => {
   
       {/* Right Sidebar */}
       <div
+  style={{
+    position: "fixed",
+    top: 60,
+    right: 10,
+    width: "250px",
+    height: "calc(100% - 60px)",
+    boxShadow: "0 2px 10px rgba(39, 39, 39, 0.6)",
+    background: "radial-gradient(circle at center, #1D2022 0%, #0f1011 110%)",
+    padding: "20px",
+    boxSizing: "border-box",
+    zIndex: 300,
+    overflowY: "auto", // so the sidebar can scroll if needed
+    borderRadius: "8px",
+  }}
+  onClick={(e) => e.stopPropagation()}
+  onMouseDown={(e) => e.stopPropagation()}
+>
+  {activeCustomizationNode ? (
+    <>
+      {/* Title */}
+      <Typography
+        variant="h6"
         style={{
-          position: "fixed",
-          top: 60,
-          right: 20,
-          width: "250px",
-          height: "calc(100% - 60px)",
-          backgroundColor: "rgba(29,32,34,0.9)", // Updated sidebar background to match toolbar
-          padding: "20px",
-          boxSizing: "border-box",
-          zIndex: 300,
-          overflowY: "auto",
-          borderRadius: "8px"
+          marginBottom: "10px",
+          color: "#fff",
+          fontWeight: "bold",
+          textAlign: "center",
         }}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
       >
-        {activeCustomizationNode ? (
-          <>
-            <Typography variant="h6" style={{ marginBottom: "5px", color: "#fff", fontWeight: "bold" }}>
-              Font
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <FormControl
-                variant="filled"
-                size="small"
-                sx={{ minWidth: 120 }}
-                style={{ marginBottom: "10px" }}
-              >
-                <InputLabel style={{ color: "#fff" }}>Font</InputLabel>
-                <Select
-                  value={tempFontFamily}
-                  onChange={(e) => setTempFontFamily(e.target.value)}
-                  style={{
-                    color: "#fff",
-                    backgroundColor: "#444",
-                    width: "100%"
-                  }}
-                >
-                  <MenuItem value="cursive">Cursive</MenuItem>
-                  <MenuItem value="Microsoft Yahei">Microsoft Yahei</MenuItem>
-                  <MenuItem value="Arial">Arial</MenuItem>
-                  <MenuItem value="Times New Roman">Times New Roman</MenuItem>
-                  <MenuItem value="Courier New">Courier New</MenuItem>
-                </Select>
-              </FormControl>
-              <Autocomplete
-                freeSolo
-                options={presetSizes}
-                getOptionLabel={(option) => option.toString()}
-                value={tempFontSize}
-                onChange={(e, newValue) => {
-                  let parsed;
-                  if (typeof newValue === "number") {
-                    parsed = newValue;
-                  } else if (typeof newValue === "string" && newValue.trim() !== "") {
-                    parsed = parseInt(newValue, 10);
-                  }
-                  if (!isNaN(parsed)) {
-                    setTempFontSize(parsed);
-                  }
-                }}
-                onInputChange={(e, newInputValue) => {
-                  const parsed = parseInt(newInputValue, 10);
-                  if (!isNaN(parsed)) {
-                    setTempFontSize(parsed);
-                  }
-                }}
-                sx={{
-                  width: 10,
-                  "& .MuiInputBase-root": {
-                    backgroundColor: "#444",
-                    color: "#fff"
-                  },
-                  "& .MuiOutlinedInput-notchedOutline": { border: "none" },
-                  "& .MuiAutocomplete-popupIndicator": { color: "#fff" }
-                }}
-                renderInput={(params) => (
-                  <TextField {...params} label="Font Size" variant="filled" InputLabelProps={{ style: { color: "#fff" } }} />
-                )}
-                style={{
-                  marginBottom: "10px",
-                  background: "#444",
-                  color: "white",
-                  width: "40%"
-                }}
-              />
-            </Box>
-            <ToggleButtonGroup
-              value={tempTextStyle}
-              onChange={(e, newStyles) => {
-                setTempTextStyle(newStyles);
-              }}
-              aria-label="text style"
-              size="small"
-            >
-              <ToggleButton value="bold" aria-label="bold">
-                <FormatBoldIcon />
-              </ToggleButton>
-              <ToggleButton value="italic" aria-label="italic">
-                <FormatItalicIcon />
-              </ToggleButton>
-              <ToggleButton value="underline" aria-label="underline">
-                <FormatUnderlinedIcon />
-              </ToggleButton>
-            </ToggleButtonGroup>
-            <ToggleButtonGroup
-              value={tempTextAlign}
-              exclusive
-              onChange={(e, newAlign) => {
-                if (newAlign !== null) {
-                  setTempTextAlign(newAlign);
-                }
-              }}
-              aria-label="text alignment"
-              size="small"
-            >
-              <ToggleButton value="left" aria-label="left">
-                <FormatAlignLeftIcon />
-              </ToggleButton>
-              <ToggleButton value="center" aria-label="center">
-                <FormatAlignCenterIcon />
-              </ToggleButton>
-              <ToggleButton value="right" aria-label="right">
-                <FormatAlignRightIcon />
-              </ToggleButton>
-            </ToggleButtonGroup>
-            <Typography
-              variant="h6"
-              style={{
-                marginBottom: "5px",
-                color: "#fff",
-                fontWeight: "bold",
-                borderTop: "1px solid #fff",
-                paddingTop: "10px"
-              }}
-            >
-              Topic
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <Box component="span" sx={{ color: "#fff", fontSize: "0.9rem" }}>
-                Background:
-                <input
-                  type="color"
-                  value={tempBgColor}
-                  onChange={(e) => setTempBgColor(e.target.value)}
-                  style={{
-                    width: 64,
-                    height: 32,
-                    border: "none",
-                    background: "transparent",
-                    padding: 0
-                  }}
-                />
-              </Box>
-              <Box component="span" sx={{ color: "#fff", fontSize: "0.9rem" }}>
-                Font Color:
-                <input
-                  type="color"
-                  value={tempTextColor}
-                  onChange={(e) => setTempTextColor(e.target.value)}
-                  style={{
-                    width: 64,
-                    height: 32,
-                    border: "none",
-                    background: "transparent",
-                    padding: 0
-                  }}
-                />
-              </Box>
-            </Box>
-            <Button
-              variant="contained"
-              onClick={handleRemoveLinks}
-              style={{ marginRight: "10px", backgroundColor: "red", marginTop: "200%" }}
-            >
-              Remove All Links
-            </Button>
-          </>
-        ) : (
-          <Typography variant="caption" style={{ color: "#fff" }}>
-            Select a node to customize...
-          </Typography>
+        Customize Menu
+      </Typography>
+
+      {/* Font Label */}
+      <Typography
+        variant="subtitle1"
+        style={{
+          marginBottom: "4px",
+          color: "#ccc",
+          fontWeight: 400,
+          fontFamily: "Arial",
+        }}
+      >
+        Font
+      </Typography>
+
+      {/* Font Selector */}
+      <FormControl
+        variant="filled"
+        size="small"
+        sx={{ minWidth: 210 }}
+        style={{
+          marginBottom: "10px",
+        }}
+      >
+        <InputLabel style={{ color: "#ccc" }}>Font</InputLabel>
+        <Select
+          value={tempFontFamily}
+          onChange={(e) => setTempFontFamily(e.target.value)}
+          style={{
+            color: "#fff",
+            backgroundColor: "#2b2b2b",
+            width: "100%",
+          }}
+        >
+          <MenuItem value="cursive">Cursive</MenuItem>
+          <MenuItem value="Microsoft Yahei">Microsoft Yahei</MenuItem>
+          <MenuItem value="Arial">Arial</MenuItem>
+          <MenuItem value="Times New Roman">Times New Roman</MenuItem>
+          <MenuItem value="Courier New">Courier New</MenuItem>
+        </Select>
+      </FormControl>
+
+      {/* Font Size Label */}
+      <Typography
+        variant="subtitle1"
+        style={{
+          marginBottom: "4px",
+          color: "#ccc",
+          fontWeight: 400,
+        }}
+      >
+        Font size
+      </Typography>
+
+      {/* Font Size Autocomplete */}
+      <Autocomplete
+        freeSolo
+        options={presetSizes}
+        getOptionLabel={(option) => option.toString()}
+        value={tempFontSize}
+        onChange={(e, newValue) => {
+          let parsed;
+          if (typeof newValue === "number") {
+            parsed = newValue;
+          } else if (typeof newValue === "string" && newValue.trim() !== "") {
+            parsed = parseInt(newValue, 10);
+          }
+          if (!isNaN(parsed)) {
+            setTempFontSize(parsed);
+          }
+        }}
+        onInputChange={(e, newInputValue) => {
+          const parsed = parseInt(newInputValue, 10);
+          if (!isNaN(parsed)) {
+            setTempFontSize(parsed);
+          }
+        }}
+        sx={{
+          width: "100%",
+          "& .MuiInputBase-root": {
+            color: "#fff",
+          },
+          "& .MuiFilledInput-root": {
+            backgroundColor: "#2b2b2b",
+          },
+          "& .MuiOutlinedInput-notchedOutline": { border: "none" },
+          "& .MuiAutocomplete-popupIndicator": { color: "#fff" },
+        }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label="Font Size"
+            variant="filled"
+            InputLabelProps={{ style: { color: "#ccc" } }}
+          />
         )}
-      </div>
+        style={{
+          marginBottom: "12px",
+          boxShadow: "inset 0 0 4px rgba(0,0,0,0.6)",
+          borderRadius: "6px",
+          color: "white",
+        }}
+      />
+
+      {/* Text Style + Alignment Toggles */}
+      <Stack direction="column" spacing={1} sx={{ alignItems: "center" }}>
+        <ToggleButtonGroup
+          color="primary"
+          value={tempTextStyle}
+          onChange={(e, newStyles) => setTempTextStyle(newStyles)}
+          style={{
+            backgroundColor: "#2b2b2b",
+            marginBottom: "8px",
+            borderRadius: "6px",
+          }}
+          aria-label="text style"
+          size="small"
+        >
+          <ToggleButton value="bold" aria-label="bold">
+            <FormatBoldIcon />
+          </ToggleButton>
+          <ToggleButton value="italic" aria-label="italic">
+            <FormatItalicIcon />
+          </ToggleButton>
+          <ToggleButton value="underline" aria-label="underline">
+            <FormatUnderlinedIcon />
+          </ToggleButton>
+        </ToggleButtonGroup>
+
+        <ToggleButtonGroup
+          value={tempTextAlign}
+          color="primary"
+          exclusive
+          onChange={(e, newAlign) => {
+            if (newAlign !== null) {
+              setTempTextAlign(newAlign);
+            }
+          }}
+          style={{
+            backgroundColor: "#2b2b2b",
+            borderRadius: "6px",
+          }}
+          aria-label="text alignment"
+          size="small"
+        >
+          <ToggleButton value="left" aria-label="left">
+            <FormatAlignLeftIcon />
+          </ToggleButton>
+          <ToggleButton value="center" aria-label="center">
+            <FormatAlignCenterIcon />
+          </ToggleButton>
+          <ToggleButton value="right" aria-label="right">
+            <FormatAlignRightIcon />
+          </ToggleButton>
+        </ToggleButtonGroup>
+      </Stack>
+
+      {/* Node Background Color */}
+      <Box
+        component="div"
+        sx={{
+          //color: "#fff",
+          fontSize: "1rem",
+          marginTop: "12px",
+          //marginBottom: "4px",
+          color: "#ccc",
+          fontWeight: 400,
+          fontFamily: "Arial",
+        }}
+        variant="subtitle1"
+      >
+        Background
+        <input
+          type="color"
+          value={tempBgColor}
+          onChange={(e) => setTempBgColor(e.target.value)}
+          style={{
+            display: "block",
+            width: "100%",
+            height: "40px",
+            marginTop: "5px",
+            border: "none",
+            backgroundColor: "transparent",
+            padding: 0,
+            borderRadius: "6px",
+            cursor: "pointer",
+            
+          }}
+        />
+      </Box>
+
+      {/* Node Font Color */}
+      <Box
+        component="div"
+        sx={{
+          //color: "#fff",
+          fontSize: "1rem",
+          marginTop: "12px",
+          //marginBottom: "4px",
+          color: "#ccc",
+          fontWeight: 400,
+          fontFamily: "Arial",
+        }}
+        variant="subtitle1"
+      >
+        Font Color
+        <input
+          type="color"
+          value={tempTextColor}
+          onChange={(e) => setTempTextColor(e.target.value)}
+          style={{
+            display: "block",
+            width: "100%",
+            height: "40px",
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            marginTop: "5px",
+            borderRadius: "6px",
+            cursor: "pointer",
+          }}
+        />
+      </Box>
+
+      {/* Remove All Links Button */}
+      <Button
+        variant="contained"
+        onClick={handleRemoveLinks}
+        style={{
+          marginTop: "30px",
+          backgroundColor: "#a11",
+          color: "#fff",
+          width: "100%",
+        }}
+      >
+        Remove All Links
+      </Button>
+    </>
+  ) : (
+    <Typography variant="body2" style={{ color: "#fff" }}>
+      Select a node to customize...
+    </Typography>
+  )}
+</div>
+
   
       {/* Active Users Panel (only one instance now) */}
       <div
@@ -2454,7 +2558,7 @@ const MindMapEditor = () => {
           position: "fixed",
           top: 60,
           right: 290,
-          backgroundColor: "rgba(0,0,0,0.7)",
+          background: "radial-gradient(circle at center,rgba(29, 32, 34, 0.63) 0%, #0f1011 100%)",
           color: "#fff",
           padding: "8px",
           borderRadius: "4px",
