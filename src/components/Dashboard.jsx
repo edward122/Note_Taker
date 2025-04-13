@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   deleteDoc,
   doc,
+  getDocs,
   setDoc,
   updateDoc,
   arrayUnion,
@@ -162,7 +163,29 @@ const Dashboard = () => {
 
   const handleSecondConfirm = async () => {
     try {
+      // 1. Delete all node documents in the "nodes" subcollection
+      const nodesSnapshot = await getDocs(
+        collection(db, 'mindMaps', deleteId, 'nodes')
+      );
+      const nodesBatch = writeBatch(db);
+      nodesSnapshot.forEach((docSnapshot) => {
+        nodesBatch.delete(docSnapshot.ref);
+      });
+      await nodesBatch.commit();
+  
+      // 2. Delete all link documents in the "links" subcollection
+      const linksSnapshot = await getDocs(
+        collection(db, 'mindMaps', deleteId, 'links')
+      );
+      const linksBatch = writeBatch(db);
+      linksSnapshot.forEach((docSnapshot) => {
+        linksBatch.delete(docSnapshot.ref);
+      });
+      await linksBatch.commit();
+  
+      // 3. Delete the main mind map document
       await deleteDoc(doc(db, 'mindMaps', deleteId));
+  
       setOpenSecondDialog(false);
       setDeleteId(null);
     } catch (error) {
@@ -267,7 +290,7 @@ const Dashboard = () => {
 
 
   return (
-    <Box sx={{ p: 2, backgroundColor: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>
+    <Box sx={{ p: 2, background: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>
       <Box sx={{ mb: 2 }}>
         <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenNewMapDialog} sx={{ mr: 2, background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}>
           New Mind Map
@@ -277,14 +300,25 @@ const Dashboard = () => {
         </Button>
         
       </Box>
-      <Grid container spacing={2} sx={{ mt: 2, margin:'100px 100px 100px 100px'} }>
+      <Grid container spacing={2} sx={{ mt: 2, margin:'100px 50px 50px 100px', overflow:"visible"} }>
         {mindMaps.map((mindMap) => (
           <Grid item xs={12} sm={6} md={4} key={mindMap.id}>
-            <Card sx={{ background: '#262626', color: '#fff', padding:'20px 20px 20px 20px', borderRadius: '10px', border: "none", boxShadow: "0 1px 10px 2px rgba(0, 0,0, 0.5)" }}>
+            <Card sx={{ background: 'radial-gradient(circle at center,rgba(47, 54, 61, 0.56) 0%,rgba(74, 81, 85, 0.43) 100%)', color: '#fff', padding:'20px 20px 20px 20px', borderRadius: '10px', border: "none", 
+              boxShadow: "0 1px 10px 2px rgba(0, 0,0, 0.5)",
+              transition: 'transform 0.3s, box-shadow 0.2s, border 0.3s',
+              height: '120px',
+              width: '505px', 
+              
+          '&:hover': {
+            border: "1px solid #007bff",
+            transform: 'translateY(-5px)',
+            boxShadow: '0 4px 12px 3px rgba(0, 0, 0, 0.8)',
+          }
+              }}>
               <CardContent onClick={() => handleCardClick(mindMap.id)} sx={{ cursor: 'pointer' }}>
                 <Typography variant="h6"sx={{fontWeight:"900"}}>{mindMap.title}</Typography>
               </CardContent>
-              <CardActions sx={{  border: "0px solid white" , background: '#262626', color: '#fff', borderRadius:'10%'}}>
+              <CardActions sx={{  border: "0px solid white" , color: '#fff', borderRadius:'10%'}}>
                 <IconButton onClick={() => handleShareClick(mindMap.id)} color="primary">
                   <ShareIcon />
                 </IconButton>
