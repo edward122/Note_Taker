@@ -76,6 +76,9 @@ const MIN_PAN = -200;
 const MAX_PAN = 200;
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
+// Add at the top, after imports
+const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Mobi|Android/i.test(navigator.userAgent));
+
 const MindMapEditor = () => {
   const { id: mindMapId } = useParams();
 
@@ -554,7 +557,7 @@ const MindMapEditor = () => {
         batch.delete(nodeRef);
   
         // Optionally, query for and add delete operations for associated links
-        // (Consider running these queries outside the loop so you’re not
+        // (Consider running these queries outside the loop so you're not
         //  awaiting for each node—collect them first then add to batch)
         const outgoingQuery = query(
           collection(db, "mindMaps", mindMapId, "links"),
@@ -2163,6 +2166,54 @@ const MindMapEditor = () => {
 
 
   
+  // Add state/refs for touch handling
+  const lastTouch = useRef(null);
+  const lastDistance = useRef(null);
+
+  // Touch event handlers for mobile panning and pinch-to-zoom
+  const handleTouchStart = (e) => {
+    if (!isMobile) return;
+    if (e.touches.length === 1) {
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, pan: { ...panRef.current } };
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastDistance.current = Math.sqrt(dx * dx + dy * dy);
+      lastTouch.current = null;
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isMobile) return;
+    if (e.touches.length === 1 && lastTouch.current) {
+      const dx = e.touches[0].clientX - lastTouch.current.x;
+      const dy = e.touches[0].clientY - lastTouch.current.y;
+      const newPan = {
+        x: lastTouch.current.pan.x + dx,
+        y: lastTouch.current.pan.y + dy,
+      };
+      setPan(newPan);
+      panRef.current = newPan;
+    } else if (e.touches.length === 2 && lastDistance.current !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const newDistance = Math.sqrt(dx * dx + dy * dy);
+      const scale = newDistance / lastDistance.current;
+      let newZoom = clamp(zoomRef.current * scale, MIN_ZOOM, MAX_ZOOM);
+      setZoom(newZoom);
+      zoomRef.current = newZoom;
+      lastDistance.current = newDistance;
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    if (!isMobile) return;
+    if (e.touches.length === 0) {
+      lastTouch.current = null;
+      lastDistance.current = null;
+    }
+  };
+
   return (
     <div
       style={{
@@ -2175,6 +2226,7 @@ const MindMapEditor = () => {
       ref={outerRef}
       onContextMenu={(e) => e.preventDefault()}
       onMouseDown={(e) => {
+        if (isMobile) return; // Disable mouse events on mobile
         if (e.target === outerRef.current) {
           handleOuterMouseDown(e);
           if (e.button !== 2) return;
@@ -2182,14 +2234,17 @@ const MindMapEditor = () => {
         }
       }}
       onDoubleClick={(e) => {
+        if (isMobile) return;
         if (e.target === outerRef.current) {
           doubleClickAddNode();
         }
       }}
       onMouseMove={(e) => {
+        if (isMobile) return;
         handleOuterMouseMove(e);
       }}
       onMouseUp={(e) => {
+        if (isMobile) return;
         handleOuterMouseUp(e);
         if (e.button === 2) {
           rightClickStartRef.current = null;
@@ -2202,11 +2257,13 @@ const MindMapEditor = () => {
             setTimeout(() => setRightClickMoved(false), 0);
             closeContextMenu();
           }
-          
         }
       }}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {renderCursors()}
       {/* Top Toolbar */}
@@ -2275,283 +2332,284 @@ const MindMapEditor = () => {
       </div>
   
       {/* Right Sidebar */}
-      <div
-  style={{
-    position: "fixed",
-    top: 60,
-    right: 10,
-    width: "250px",
-    height: "calc(100% - 60px)",
-    boxShadow: "0 2px 10px rgba(39, 39, 39, 0.6)",
-    background: "radial-gradient(circle at center, #1D2022 0%, #0f1011 110%)",
-    padding: "20px",
-    boxSizing: "border-box",
-    zIndex: 300,
-    overflowY: "auto", // so the sidebar can scroll if needed
-    borderRadius: "8px",
-  }}
-  onClick={(e) => e.stopPropagation()}
-  onMouseDown={(e) => e.stopPropagation()}
->
-  {activeCustomizationNode ? (
-    <>
-      {/* Title */}
-      <Typography
-        variant="h6"
-        style={{
-          marginBottom: "10px",
-          color: "#fff",
-          fontWeight: "bold",
-          textAlign: "center",
-        }}
-      >
-        Customize Menu
-      </Typography>
-
-      {/* Font Label */}
-      <Typography
-        variant="subtitle1"
-        style={{
-          marginBottom: "4px",
-          color: "#ccc",
-          fontWeight: 400,
-          fontFamily: "Arial",
-        }}
-      >
-        Font
-      </Typography>
-
-      {/* Font Selector */}
-      <FormControl
-        variant="filled"
-        size="small"
-        sx={{ minWidth: 210 }}
-        style={{
-          marginBottom: "10px",
-        }}
-      >
-        <InputLabel style={{ color: "#ccc" }}>Font</InputLabel>
-        <Select
-          value={tempFontFamily}
-          onChange={(e) => setTempFontFamily(e.target.value)}
+      {!isMobile && (
+        <div
           style={{
-            color: "#fff",
-            backgroundColor: "#2b2b2b",
-            width: "100%",
+            position: "fixed",
+            top: 60,
+            right: 10,
+            width: "250px",
+            height: "calc(100% - 60px)",
+            boxShadow: "0 2px 10px rgba(39, 39, 39, 0.6)",
+            background: "radial-gradient(circle at center, #1D2022 0%, #0f1011 110%)",
+            padding: "20px",
+            boxSizing: "border-box",
+            zIndex: 300,
+            overflowY: "auto",
+            borderRadius: "8px",
           }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
         >
-          <MenuItem value="cursive">Cursive</MenuItem>
-          <MenuItem value="Microsoft Yahei">Microsoft Yahei</MenuItem>
-          <MenuItem value="Arial">Arial</MenuItem>
-          <MenuItem value="Times New Roman">Times New Roman</MenuItem>
-          <MenuItem value="Courier New">Courier New</MenuItem>
-        </Select>
-      </FormControl>
+          {activeCustomizationNode ? (
+            <>
+              {/* Title */}
+              <Typography
+                variant="h6"
+                style={{
+                  marginBottom: "10px",
+                  color: "#fff",
+                  fontWeight: "bold",
+                  textAlign: "center",
+                }}
+              >
+                Customize Menu
+              </Typography>
 
-      {/* Font Size Label */}
-      <Typography
-        variant="subtitle1"
-        style={{
-          marginBottom: "4px",
-          color: "#ccc",
-          fontWeight: 400,
-        }}
-      >
-        Font size
-      </Typography>
+              {/* Font Label */}
+              <Typography
+                variant="subtitle1"
+                style={{
+                  marginBottom: "4px",
+                  color: "#ccc",
+                  fontWeight: 400,
+                  fontFamily: "Arial",
+                }}
+              >
+                Font
+              </Typography>
 
-      {/* Font Size Autocomplete */}
-      <Autocomplete
-        freeSolo
-        options={presetSizes}
-        getOptionLabel={(option) => option.toString()}
-        value={tempFontSize}
-        onChange={(e, newValue) => {
-          let parsed;
-          if (typeof newValue === "number") {
-            parsed = newValue;
-          } else if (typeof newValue === "string" && newValue.trim() !== "") {
-            parsed = parseInt(newValue, 10);
-          }
-          if (!isNaN(parsed)) {
-            setTempFontSize(parsed);
-          }
-        }}
-        onInputChange={(e, newInputValue) => {
-          const parsed = parseInt(newInputValue, 10);
-          if (!isNaN(parsed)) {
-            setTempFontSize(parsed);
-          }
-        }}
-        sx={{
-          width: "100%",
-          "& .MuiInputBase-root": {
-            color: "#fff",
-          },
-          "& .MuiFilledInput-root": {
-            backgroundColor: "#2b2b2b",
-          },
-          "& .MuiOutlinedInput-notchedOutline": { border: "none" },
-          "& .MuiAutocomplete-popupIndicator": { color: "#fff" },
-        }}
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label="Font Size"
-            variant="filled"
-            InputLabelProps={{ style: { color: "#ccc" } }}
-          />
-        )}
-        style={{
-          marginBottom: "12px",
-          boxShadow: "inset 0 0 4px rgba(0,0,0,0.6)",
-          borderRadius: "6px",
-          color: "white",
-        }}
-      />
+              {/* Font Selector */}
+              <FormControl
+                variant="filled"
+                size="small"
+                sx={{ minWidth: 210 }}
+                style={{
+                  marginBottom: "10px",
+                }}
+              >
+                <InputLabel style={{ color: "#ccc" }}>Font</InputLabel>
+                <Select
+                  value={tempFontFamily}
+                  onChange={(e) => setTempFontFamily(e.target.value)}
+                  style={{
+                    color: "#fff",
+                    backgroundColor: "#2b2b2b",
+                    width: "100%",
+                  }}
+                >
+                  <MenuItem value="cursive">Cursive</MenuItem>
+                  <MenuItem value="Microsoft Yahei">Microsoft Yahei</MenuItem>
+                  <MenuItem value="Arial">Arial</MenuItem>
+                  <MenuItem value="Times New Roman">Times New Roman</MenuItem>
+                  <MenuItem value="Courier New">Courier New</MenuItem>
+                </Select>
+              </FormControl>
 
-      {/* Text Style + Alignment Toggles */}
-      <Stack direction="column" spacing={1} sx={{ alignItems: "center" }}>
-        <ToggleButtonGroup
-          color="primary"
-          value={tempTextStyle}
-          onChange={(e, newStyles) => setTempTextStyle(newStyles)}
-          style={{
-            backgroundColor: "#2b2b2b",
-            marginBottom: "8px",
-            borderRadius: "6px",
-          }}
-          aria-label="text style"
-          size="small"
-        >
-          <ToggleButton value="bold" aria-label="bold">
-            <FormatBoldIcon />
-          </ToggleButton>
-          <ToggleButton value="italic" aria-label="italic">
-            <FormatItalicIcon />
-          </ToggleButton>
-          <ToggleButton value="underline" aria-label="underline">
-            <FormatUnderlinedIcon />
-          </ToggleButton>
-        </ToggleButtonGroup>
+              {/* Font Size Label */}
+              <Typography
+                variant="subtitle1"
+                style={{
+                  marginBottom: "4px",
+                  color: "#ccc",
+                  fontWeight: 400,
+                }}
+              >
+                Font size
+              </Typography>
 
-        <ToggleButtonGroup
-          value={tempTextAlign}
-          color="primary"
-          exclusive
-          onChange={(e, newAlign) => {
-            if (newAlign !== null) {
-              setTempTextAlign(newAlign);
-            }
-          }}
-          style={{
-            backgroundColor: "#2b2b2b",
-            borderRadius: "6px",
-          }}
-          aria-label="text alignment"
-          size="small"
-        >
-          <ToggleButton value="left" aria-label="left">
-            <FormatAlignLeftIcon />
-          </ToggleButton>
-          <ToggleButton value="center" aria-label="center">
-            <FormatAlignCenterIcon />
-          </ToggleButton>
-          <ToggleButton value="right" aria-label="right">
-            <FormatAlignRightIcon />
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Stack>
+              {/* Font Size Autocomplete */}
+              <Autocomplete
+                freeSolo
+                options={presetSizes}
+                getOptionLabel={(option) => option.toString()}
+                value={tempFontSize}
+                onChange={(e, newValue) => {
+                  let parsed;
+                  if (typeof newValue === "number") {
+                    parsed = newValue;
+                  } else if (typeof newValue === "string" && newValue.trim() !== "") {
+                    parsed = parseInt(newValue, 10);
+                  }
+                  if (!isNaN(parsed)) {
+                    setTempFontSize(parsed);
+                  }
+                }}
+                onInputChange={(e, newInputValue) => {
+                  const parsed = parseInt(newInputValue, 10);
+                  if (!isNaN(parsed)) {
+                    setTempFontSize(parsed);
+                  }
+                }}
+                sx={{
+                  width: "100%",
+                  "& .MuiInputBase-root": {
+                    color: "#fff",
+                  },
+                  "& .MuiFilledInput-root": {
+                    backgroundColor: "#2b2b2b",
+                  },
+                  "& .MuiOutlinedInput-notchedOutline": { border: "none" },
+                  "& .MuiAutocomplete-popupIndicator": { color: "#fff" },
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Font Size"
+                    variant="filled"
+                    InputLabelProps={{ style: { color: "#ccc" } }}
+                  />
+                )}
+                style={{
+                  marginBottom: "12px",
+                  boxShadow: "inset 0 0 4px rgba(0,0,0,0.6)",
+                  borderRadius: "6px",
+                  color: "white",
+                }}
+              />
 
-      {/* Node Background Color */}
-      <Box
-        component="div"
-        sx={{
-          //color: "#fff",
-          fontSize: "1rem",
-          marginTop: "12px",
-          //marginBottom: "4px",
-          color: "#ccc",
-          fontWeight: 400,
-          fontFamily: "Arial",
-        }}
-        variant="subtitle1"
-      >
-        Background
-        <input
-          type="color"
-          value={tempBgColor}
-          onChange={(e) => setTempBgColor(e.target.value)}
-          style={{
-            display: "block",
-            width: "100%",
-            height: "40px",
-            marginTop: "5px",
-            border: "none",
-            backgroundColor: "transparent",
-            padding: 0,
-            borderRadius: "6px",
-            cursor: "pointer",
-            
-          }}
-        />
-      </Box>
+              {/* Text Style + Alignment Toggles */}
+              <Stack direction="column" spacing={1} sx={{ alignItems: "center" }}>
+                <ToggleButtonGroup
+                  color="primary"
+                  value={tempTextStyle}
+                  onChange={(e, newStyles) => setTempTextStyle(newStyles)}
+                  style={{
+                    backgroundColor: "#2b2b2b",
+                    marginBottom: "8px",
+                    borderRadius: "6px",
+                  }}
+                  aria-label="text style"
+                  size="small"
+                >
+                  <ToggleButton value="bold" aria-label="bold">
+                    <FormatBoldIcon />
+                  </ToggleButton>
+                  <ToggleButton value="italic" aria-label="italic">
+                    <FormatItalicIcon />
+                  </ToggleButton>
+                  <ToggleButton value="underline" aria-label="underline">
+                    <FormatUnderlinedIcon />
+                  </ToggleButton>
+                </ToggleButtonGroup>
 
-      {/* Node Font Color */}
-      <Box
-        component="div"
-        sx={{
-          //color: "#fff",
-          fontSize: "1rem",
-          marginTop: "12px",
-          //marginBottom: "4px",
-          color: "#ccc",
-          fontWeight: 400,
-          fontFamily: "Arial",
-        }}
-        variant="subtitle1"
-      >
-        Font Color
-        <input
-          type="color"
-          value={tempTextColor}
-          onChange={(e) => setTempTextColor(e.target.value)}
-          style={{
-            display: "block",
-            width: "100%",
-            height: "40px",
-            border: "none",
-            background: "transparent",
-            padding: 0,
-            marginTop: "5px",
-            borderRadius: "6px",
-            cursor: "pointer",
-          }}
-        />
-      </Box>
+                <ToggleButtonGroup
+                  value={tempTextAlign}
+                  color="primary"
+                  exclusive
+                  onChange={(e, newAlign) => {
+                    if (newAlign !== null) {
+                      setTempTextAlign(newAlign);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: "#2b2b2b",
+                    borderRadius: "6px",
+                  }}
+                  aria-label="text alignment"
+                  size="small"
+                >
+                  <ToggleButton value="left" aria-label="left">
+                    <FormatAlignLeftIcon />
+                  </ToggleButton>
+                  <ToggleButton value="center" aria-label="center">
+                    <FormatAlignCenterIcon />
+                  </ToggleButton>
+                  <ToggleButton value="right" aria-label="right">
+                    <FormatAlignRightIcon />
+                  </ToggleButton>
+                </ToggleButtonGroup>
+              </Stack>
 
-      {/* Remove All Links Button */}
-      <Button
-        variant="contained"
-        onClick={handleRemoveLinks}
-        style={{
-          marginTop: "30px",
-          backgroundColor: "#a11",
-          color: "#fff",
-          width: "100%",
-        }}
-      >
-        Remove All Links
-      </Button>
-    </>
-  ) : (
-    <Typography variant="body2" style={{ color: "#fff" }}>
-      Select a node to customize...
-    </Typography>
-  )}
-</div>
+              {/* Node Background Color */}
+              <Box
+                component="div"
+                sx={{
+                  //color: "#fff",
+                  fontSize: "1rem",
+                  marginTop: "12px",
+                  //marginBottom: "4px",
+                  color: "#ccc",
+                  fontWeight: 400,
+                  fontFamily: "Arial",
+                }}
+                variant="subtitle1"
+              >
+                Background
+                <input
+                  type="color"
+                  value={tempBgColor}
+                  onChange={(e) => setTempBgColor(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    height: "40px",
+                    marginTop: "5px",
+                    border: "none",
+                    backgroundColor: "transparent",
+                    padding: 0,
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    
+                  }}
+                />
+              </Box>
 
-  
+              {/* Node Font Color */}
+              <Box
+                component="div"
+                sx={{
+                  //color: "#fff",
+                  fontSize: "1rem",
+                  marginTop: "12px",
+                  //marginBottom: "4px",
+                  color: "#ccc",
+                  fontWeight: 400,
+                  fontFamily: "Arial",
+                }}
+                variant="subtitle1"
+              >
+                Font Color
+                <input
+                  type="color"
+                  value={tempTextColor}
+                  onChange={(e) => setTempTextColor(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    height: "40px",
+                    border: "none",
+                    background: "transparent",
+                    padding: 0,
+                    marginTop: "5px",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                  }}
+                />
+              </Box>
+
+              {/* Remove All Links Button */}
+              <Button
+                variant="contained"
+                onClick={handleRemoveLinks}
+                style={{
+                  marginTop: "30px",
+                  backgroundColor: "#a11",
+                  color: "#fff",
+                  width: "100%",
+                }}
+              >
+                Remove All Links
+              </Button>
+            </>
+          ) : (
+            <Typography variant="body2" style={{ color: "#fff" }}>
+              Select a node to customize...
+            </Typography>
+          )}
+        </div>
+      )}
+
       {/* Active Users Panel (only one instance now) */}
       <div
         style={{
@@ -2641,16 +2699,16 @@ const MindMapEditor = () => {
             selectedNodes={selectedNodes}
             editingNodeId={editingNodeId}
             editedText={editedText}
-            handleResizeMouseDown={handleResizeMouseDown}
-            handleNodeClick={handleNodeClick}
-            handleDoubleClick={handleDoubleClick}
-            handleTyping={handleTyping}
-            handleTextBlur={handleTextBlur}
-            setEditedText={setEditedText}
-            setHoveredNodeId={setHoveredNodeId}
+            handleResizeMouseDown={isMobile ? () => {} : handleResizeMouseDown}
+            handleNodeClick={isMobile ? () => {} : handleNodeClick}
+            handleDoubleClick={isMobile ? () => {} : handleDoubleClick}
+            handleTyping={isMobile ? () => {} : handleTyping}
+            handleTextBlur={isMobile ? () => {} : handleTextBlur}
+            setEditedText={isMobile ? () => {} : setEditedText}
+            setHoveredNodeId={isMobile ? () => {} : setHoveredNodeId}
             linkingSource={linkingSource}
             hoveredNodeId={hoveredNodeId}
-            onStart={(e, data) => {
+            onStart={isMobile ? () => false : (e, data) => {
               if (editingNodeId === node.id) return false;
               setIsDragging(true);
               const rect = outerRef.current.getBoundingClientRect();
@@ -2678,7 +2736,7 @@ const MindMapEditor = () => {
                 }
               }
             }}
-            onDrag={(e, data) => {
+            onDrag={isMobile ? () => {} : (e, data) => {
               const rect = outerRef.current.getBoundingClientRect();
               const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
               const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
@@ -2695,7 +2753,7 @@ const MindMapEditor = () => {
                 );
               }
             }}
-            onStop={async (e, data) => {
+            onStop={isMobile ? () => {} : async (e, data) => {
               const rect = outerRef.current.getBoundingClientRect();
               const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
               const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;

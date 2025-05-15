@@ -35,7 +35,9 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Box
+  Box,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
@@ -71,6 +73,9 @@ const Dashboard = () => {
 
   // Ref for import file input
   const fileInputRef = useRef(null);
+
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   useEffect(() => {
     // Wait for the current user
@@ -290,40 +295,126 @@ const Dashboard = () => {
 
 
   return (
-    <Box sx={{ p: 2, background: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)', minHeight: '100vh', color: '#fff' , border: "5px solid #262626"}}>
-      <Box sx={{ mb: 2 }}>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenNewMapDialog} sx={{ mr: 2, background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}>
+    <Box sx={{
+      p: isMobile ? 1 : 3,
+      background: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)',
+      minHeight: '100vh',
+      color: '#fff',
+      border: isMobile ? 'none' : '5px solid #262626',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+    }}>
+      <Box sx={{
+        mb: isMobile ? 1 : 3,
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        alignItems: isMobile ? 'stretch' : 'center',
+        width: isMobile ? '100%' : 'auto',
+      }}>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleOpenNewMapDialog}
+          sx={{
+            mr: isMobile ? 0 : 2,
+            mb: isMobile ? 1 : 0,
+            width: isMobile ? '100%' : 'auto',
+            background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)"
+          }}
+        >
           New Mind Map
         </Button>
-        <Button variant="contained" onClick={handleImportClick} sx={{ mr: 1, background:"radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)" }}>
+        <Button
+          variant="contained"
+          onClick={handleImportClick}
+          sx={{
+            mr: isMobile ? 0 : 1,
+            mb: isMobile ? 1 : 0,
+            width: isMobile ? '100%' : 'auto',
+            background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)"
+          }}
+        >
           Import Mind Map
         </Button>
-        
       </Box>
-      <Grid container spacing={2} sx={{ mt: 2, margin:'100px 50px 50px 100px', overflow:"visible"} }>
+      <Grid
+        container
+        spacing={isMobile ? 1 : 2}
+        sx={{
+          mt: isMobile ? 1 : 2,
+          mb: isMobile ? 1 : 3,
+          width: '100%',
+        }}
+        justifyContent={isMobile ? 'center' : 'flex-start'}
+      >
         {mindMaps.map((mindMap) => (
-          <Grid item xs={12} sm={6} md={4} key={mindMap.id}>
-            <Card sx={{ background: 'radial-gradient(circle at center,rgba(47, 54, 61, 0.56) 0%,rgba(74, 81, 85, 0.43) 100%)', color: '#fff', padding:'20px 20px 20px 20px', borderRadius: '10px', border: "none", 
-              boxShadow: "0 1px 10px 2px rgba(0, 0,0, 0.5)",
-              transition: 'transform 0.3s, box-shadow 0.2s, border 0.3s',
-              height: '120px',
-              width: '505px', 
-              
-          '&:hover': {
-            border: "1px solid #007bff",
-            transform: 'translateY(-5px)',
-            boxShadow: '0 4px 12px 3px rgba(0, 0, 0, 0.8)',
-          }
-              }}>
-              <CardContent onClick={() => handleCardClick(mindMap.id)} sx={{ cursor: 'pointer' }}>
-                <Typography variant="h6"sx={{fontWeight:"900"}}>{mindMap.title}</Typography>
+          <Grid item xs={12} sm={6} md={4} lg={3} key={mindMap.id} sx={{ display: 'flex', justifyContent: isMobile ? 'center' : 'flex-start' }}>
+            <Card
+              sx={{
+                background: 'linear-gradient(135deg, #23272f 60%, #23272f 100%)',
+                color: '#fff',
+                p: isMobile ? 1 : 2,
+                borderRadius: '14px',
+                border: 'none',
+                boxShadow: isMobile ? '0 1px 4px 1px rgba(0,0,0,0.3)' : '0 2px 8px 2px rgba(0,0,0,0.5)',
+                transition: 'transform 0.3s, box-shadow 0.2s, border 0.3s',
+                height: isMobile ? 'auto' : '120px',
+                width: isMobile ? '100%' : '260px',
+                maxWidth: '100%',
+                minWidth: isMobile ? '0' : '200px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                '&:hover': {
+                  border: '2px solid #007bff',
+                  transform: isMobile ? 'none' : 'translateY(-4px) scale(1.02)',
+                  boxShadow: isMobile ? '0 2px 8px 2px rgba(0,0,0,0.4)' : '0 4px 16px 4px rgba(0,0,0,0.7)',
+                },
+              }}
+            >
+              <CardContent
+                onClick={() => handleCardClick(mindMap.id)}
+                sx={{
+                  cursor: 'pointer',
+                  p: isMobile ? 1 : 2,
+                  pb: '8px !important',
+                  textAlign: isMobile ? 'center' : 'left',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  minHeight: isMobile ? 'auto' : '50px',
+                }}
+              >
+                <Typography
+                  variant={isMobile ? 'h6' : 'h6'}
+                  sx={{
+                    fontWeight: 900,
+                    fontSize: isMobile ? '1.1rem' : '1.2rem',
+                    wordBreak: 'break-word',
+                    letterSpacing: '-0.5px',
+                    lineHeight: 1.2,
+                    textShadow: '0 2px 8px #000a',
+                  }}
+                >
+                  {mindMap.title}
+                </Typography>
               </CardContent>
-              <CardActions sx={{  border: "0px solid white" , color: '#fff', borderRadius:'10%'}}>
-                <IconButton onClick={() => handleShareClick(mindMap.id)} color="primary">
-                  <ShareIcon />
+              <CardActions
+                sx={{
+                  border: '0px solid white',
+                  color: '#fff',
+                  borderRadius: '10%',
+                  justifyContent: isMobile ? 'center' : 'flex-end',
+                  p: isMobile ? 0.5 : 1,
+                  pt: 0,
+                  gap: isMobile ? 1 : 2,
+                }}
+              >
+                <IconButton onClick={() => handleShareClick(mindMap.id)} color="primary" size={isMobile ? 'small' : 'medium'} sx={{ mx: 0.5 }}>
+                  <ShareIcon fontSize={isMobile ? 'small' : 'medium'} />
                 </IconButton>
-                <IconButton onClick={() => handleDeleteClick(mindMap.id)} color="error">
-                  <DeleteIcon />
+                <IconButton onClick={() => handleDeleteClick(mindMap.id)} color="error" size={isMobile ? 'small' : 'medium'} sx={{ mx: 0.5 }}>
+                  <DeleteIcon fontSize={isMobile ? 'small' : 'medium'} />
                 </IconButton>
               </CardActions>
             </Card>
@@ -341,10 +432,14 @@ const Dashboard = () => {
       />
 
       {/* New Mind Map Dialog */}
-      <Dialog open={openNewMapDialog} onClose={() => setOpenNewMapDialog(false)}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff' } }}
+      <Dialog
+        open={openNewMapDialog}
+        onClose={() => setOpenNewMapDialog(false)}
+        fullWidth
+        maxWidth={isMobile ? 'xs' : 'sm'}
+        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
       >
-        <DialogTitle>Create New Mind Map</DialogTitle>
+        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Create New Mind Map</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
@@ -356,7 +451,7 @@ const Dashboard = () => {
             onChange={(e) => setNewMapName(e.target.value)}
             variant="filled"
             InputLabelProps={{ style: { color: '#fff' } }}
-            sx={{ backgroundColor: '#555' }}
+            sx={{ backgroundColor: '#555', fontSize: isMobile ? '1rem' : '1.1rem' }}
           />
           <FormControl fullWidth margin="dense" variant="filled">
             <InputLabel id="template-select-label" sx={{ color: '#fff' }}>Template</InputLabel>
@@ -373,47 +468,59 @@ const Dashboard = () => {
             </Select>
           </FormControl>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenNewMapDialog(false)} sx={{ color: '#fff' }}>
+        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
+          <Button onClick={() => setOpenNewMapDialog(false)} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>
             Cancel
           </Button>
-          <Button onClick={handleCreateNewMindMap} variant="contained">
+          <Button onClick={handleCreateNewMindMap} variant="contained" sx={{ width: isMobile ? '100%' : 'auto' }}>
             Create
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Delete Confirmation Dialogs */}
-      <Dialog open={openFirstDialog} onClose={handleCancelDelete}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff' } }}
+      <Dialog
+        open={openFirstDialog}
+        onClose={handleCancelDelete}
+        fullWidth
+        maxWidth={isMobile ? 'xs' : 'sm'}
+        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
       >
-        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Confirm Delete</DialogTitle>
         <DialogContent>
-          <Typography>Are you sure you want to delete this mind map?</Typography>
+          <Typography sx={{ fontSize: isMobile ? '1rem' : '1.1rem' }}>Are you sure you want to delete this mind map?</Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCancelDelete} sx={{ color: '#fff' }}>Cancel</Button>
-          <Button onClick={handleFirstConfirm} color="primary">Yes</Button>
+        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
+          <Button onClick={handleCancelDelete} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>Cancel</Button>
+          <Button onClick={handleFirstConfirm} color="primary" sx={{ width: isMobile ? '100%' : 'auto' }}>Yes</Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={openSecondDialog} onClose={handleCancelDelete}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff' } }}
+      <Dialog
+        open={openSecondDialog}
+        onClose={handleCancelDelete}
+        fullWidth
+        maxWidth={isMobile ? 'xs' : 'sm'}
+        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
       >
-        <DialogTitle>Confirm Delete Again</DialogTitle>
+        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Confirm Delete Again</DialogTitle>
         <DialogContent>
-          <Typography>This action cannot be undone. Are you really sure?</Typography>
+          <Typography sx={{ fontSize: isMobile ? '1rem' : '1.1rem' }}>This action cannot be undone. Are you really sure?</Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCancelDelete} sx={{ color: '#fff' }}>Cancel</Button>
-          <Button onClick={handleSecondConfirm} color="error">Delete</Button>
+        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
+          <Button onClick={handleCancelDelete} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>Cancel</Button>
+          <Button onClick={handleSecondConfirm} color="error" sx={{ width: isMobile ? '100%' : 'auto' }}>Delete</Button>
         </DialogActions>
       </Dialog>
 
       {/* Share Dialog */}
-      <Dialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff' } }}
+      <Dialog
+        open={shareDialogOpen}
+        onClose={() => setShareDialogOpen(false)}
+        fullWidth
+        maxWidth={isMobile ? 'xs' : 'sm'}
+        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
       >
-        <DialogTitle>Share Mind Map</DialogTitle>
+        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Share Mind Map</DialogTitle>
         <DialogContent>
           <TextField
             label="Collaborator Email"
@@ -422,14 +529,14 @@ const Dashboard = () => {
             onChange={(e) => setShareEmail(e.target.value)}
             variant="filled"
             InputLabelProps={{ style: { color: '#fff' } }}
-            sx={{ backgroundColor: '#555' }}
+            sx={{ backgroundColor: '#555', fontSize: isMobile ? '1rem' : '1.1rem' }}
           />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShareDialogOpen(false)} sx={{ color: '#fff' }}>
+        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
+          <Button onClick={() => setShareDialogOpen(false)} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>
             Cancel
           </Button>
-          <Button onClick={handleShareMindMap} variant="contained">
+          <Button onClick={handleShareMindMap} variant="contained" sx={{ width: isMobile ? '100%' : 'auto' }}>
             Share
           </Button>
         </DialogActions>

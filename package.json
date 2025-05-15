@@ -34,6 +34,7 @@
     "lodash.throttle": "^4.1.1",
     "react-color": "^2.19.3",
     "react-draggable": "^4.4.6",
+    "react-javascript": "file:",
     "react-router-dom": "^7.4.1"
   }
 }
