@@ -102,7 +102,7 @@ const MindMapNode = memo(({
           fontStyle: node.textStyle && node.textStyle.includes("italic") ? "italic" : "normal",
           textDecoration: node.textStyle && node.textStyle.includes("underline") ? "underline" : "none",
           fontWeight: node.textStyle && node.textStyle.includes("bold") ? "bold" : "normal",
-          fontFamily: node.fontFamily || "cursive",
+          fontFamily: node.fontFamily || "Arial, sans-serif",
           // Outline properties for fade-out effect.
           outlineWidth: `${effectiveOutlineWidth}px`,
           outlineStyle: "solid",

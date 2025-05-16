@@ -2183,8 +2183,14 @@ const MindMapEditor = () => {
     }
   };
 
+  const throttledSetZoom = useRef(throttle((newZoom) => {
+    setZoom(newZoom);
+    zoomRef.current = newZoom;
+  }, 16)); // ~60fps
+
   const handleTouchMove = (e) => {
     if (!isMobile) return;
+    e.preventDefault();
     if (e.touches.length === 1 && lastTouch.current) {
       const dx = e.touches[0].clientX - lastTouch.current.x;
       const dy = e.touches[0].clientY - lastTouch.current.y;
@@ -2200,8 +2206,7 @@ const MindMapEditor = () => {
       const newDistance = Math.sqrt(dx * dx + dy * dy);
       const scale = newDistance / lastDistance.current;
       let newZoom = clamp(zoomRef.current * scale, MIN_ZOOM, MAX_ZOOM);
-      setZoom(newZoom);
-      zoomRef.current = newZoom;
+      throttledSetZoom.current(newZoom);
       lastDistance.current = newDistance;
     }
   };
