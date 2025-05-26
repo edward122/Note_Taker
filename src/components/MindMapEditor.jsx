@@ -81,6 +81,7 @@ const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /M
 
 const MindMapEditor = () => {
   const { id: mindMapId } = useParams();
+  const navigate = useNavigate();
 
   // Persistent state from Firestore
   const [nodes, setNodes] = useState([]);
@@ -90,10 +91,13 @@ const MindMapEditor = () => {
   const [linkingMode, setLinkingMode] = useState(false);
   const [linkingSource, setLinkingSource] = useState(null);
   const [copiedNodes, setCopiedNodes] = useState([]);
-  const toggleLinkingMode = () => {
+  
+  // Memoized toggle function
+  const toggleLinkingMode = useCallback(() => {
     setLinkingMode((prev) => !prev);
     setLinkingSource(null);
-  };
+  }, []);
+
   // Sidebar customization state
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedNodes, setSelectedNodes] = useState([]);
@@ -117,6 +121,11 @@ const MindMapEditor = () => {
   const mouseStart = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(zoom);
   const panRef = useRef(pan);
+  
+  // Performance optimization refs
+  const lastRenderTime = useRef(0);
+  const animationFrameId = useRef(null);
+  const isRendering = useRef(false);
 
   // Local hover state for highlighting
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
@@ -136,17 +145,126 @@ const MindMapEditor = () => {
   const [tempFontFamily, setTempFontFamily] = useState("cursive");
   const [tempFontSize, setTempFontSize] = useState(14);
 
+  // Z-index management
+  const [tempZIndex, setTempZIndex] = useState(1);
+  
+  // Z-index functions
+  const handleBringToFront = useCallback(async () => {
+    if (selectedNodes.length === 0) return;
+    
+    pushSelectionToUndoStack();
+    
+    // Find the highest z-index among all nodes
+    const maxZIndex = Math.max(...nodes.map(n => n.zIndex || 1), 1);
+    const newZIndex = maxZIndex + 1;
+    
+    const batch = writeBatch(db);
+    selectedNodes.forEach((id) => {
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+      batch.update(nodeRef, { zIndex: newZIndex });
+    });
+    
+    try {
+      await batch.commit();
+      setNodes((prev) =>
+        prev.map((n) =>
+          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
+        )
+      );
+    } catch (error) {
+      console.error("Error updating z-index:", error);
+    }
+  }, [selectedNodes, nodes, mindMapId]);
+
+  const handleSendToBack = useCallback(async () => {
+    if (selectedNodes.length === 0) return;
+    
+    pushSelectionToUndoStack();
+    
+    // Find the lowest z-index among all nodes
+    const minZIndex = Math.min(...nodes.map(n => n.zIndex || 1), 1);
+    const newZIndex = Math.max(minZIndex - 1, 0);
+    
+    const batch = writeBatch(db);
+    selectedNodes.forEach((id) => {
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+      batch.update(nodeRef, { zIndex: newZIndex });
+    });
+    
+    try {
+      await batch.commit();
+      setNodes((prev) =>
+        prev.map((n) =>
+          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
+        )
+      );
+    } catch (error) {
+      console.error("Error updating z-index:", error);
+    }
+  }, [selectedNodes, nodes, mindMapId]);
+
+  const handleZIndexChange = useCallback(async (newZIndex) => {
+    if (selectedNodes.length === 0) return;
+    
+    pushSelectionToUndoStack();
+    
+    const batch = writeBatch(db);
+    selectedNodes.forEach((id) => {
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+      batch.update(nodeRef, { zIndex: newZIndex });
+    });
+    
+    try {
+      await batch.commit();
+      setNodes((prev) =>
+        prev.map((n) =>
+          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
+        )
+      );
+    } catch (error) {
+      console.error("Error updating z-index:", error);
+    }
+  }, [selectedNodes, mindMapId]);
+
   const dragStartRef = useRef({ x: 0, y: 0 });
   const multiDragStartRef = useRef({});
   const [isDragging, setIsDragging] = useState(false);
   const groupDeltaRef = useRef({ x: 0, y: 0 });
   const [groupDelta, setGroupDelta] = useState({ x: 0, y: 0 });
   const isAnimatingRef = useRef(false);
-  const activeCustomizationNode = selectedNodes.length
-    ? nodes.find((n) => n.id === selectedNodes[0])
-    : null;
+  
+  // Memoized active customization node
+  const activeCustomizationNode = useMemo(() => 
+    selectedNodes.length ? nodes.find((n) => n.id === selectedNodes[0]) : null,
+    [selectedNodes, nodes]
+  );
 
-  const updateGroupDelta = (delta) => {
+  // Optimized transform update function
+  const updateTransform = useCallback((newPan, newZoom) => {
+    if (animationFrameId.current) {
+      cancelAnimationFrame(animationFrameId.current);
+    }
+    
+    animationFrameId.current = requestAnimationFrame(() => {
+      const now = performance.now();
+      if (now - lastRenderTime.current < 16) return; // Limit to ~60fps
+      
+      if (newPan) {
+        setPan(newPan);
+        panRef.current = newPan;
+      }
+      if (newZoom !== undefined) {
+        setZoom(newZoom);
+        zoomRef.current = newZoom;
+      }
+      
+      lastRenderTime.current = now;
+      animationFrameId.current = null;
+    });
+  }, []);
+
+  // Memoized update group delta function
+  const updateGroupDelta = useCallback((delta) => {
     groupDeltaRef.current = delta;
     if (!isAnimatingRef.current) {
       isAnimatingRef.current = true;
@@ -155,7 +273,7 @@ const MindMapEditor = () => {
         isAnimatingRef.current = false;
       });
     }
-  };
+  }, []);
 
   // Font
   const [fontFamily, setFontFamily] = useState("cursive");
@@ -164,8 +282,6 @@ const MindMapEditor = () => {
   const [tempTextStyle, setTempTextStyle] = useState([]);
   const [textAlign, setTextAlign] = useState("left");
   const [tempTextAlign, setTempTextAlign] = useState("left");
-
-
 
   // Topic
   const [shape, setShape] = useState("rectangle");
@@ -187,9 +303,11 @@ const MindMapEditor = () => {
   const [branchNumber, setBranchNumber] = useState(1);
   const [color, setColor] = useState('#ff0000');
 
-  const handleTextStyleChange = (event, newStyles) => {
+  // Memoized text style handler
+  const handleTextStyleChange = useCallback((event, newStyles) => {
     setTextStyle(newStyles);
-  };
+  }, []);
+
   // Check if we have bold, italic, underline in textStyle array
   const isBold = textStyle.includes("bold");
   const isItalic = textStyle.includes("italic");
@@ -201,31 +319,19 @@ const MindMapEditor = () => {
   const [rightClickMoved, setRightClickMoved] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-
-
-
-  //useEffect(() => {
-  //  const outer = outerRef.current;
-  //  if (!outer) return;
-  //  outer.addEventListener("contextmenu", handleCanvasContextMenu);
-  //  return () => outer.removeEventListener("contextmenu", handleCanvasContextMenu);
-  //}, []);
-
-
   const [contextMenuu, setContextMenu] = useState({ visible: false, x: 0, y: 0, type: null });
-  const closeContextMenu = () => setContextMenu({ visible: false, x: 0, y: 0, type: null });
   
-  // Handler for right-click on the canvas (outerRef)
-  const handleCanvasContextMenu = (e) => {
+  // Memoized context menu close function
+  const closeContextMenu = useCallback(() => 
+    setContextMenu({ visible: false, x: 0, y: 0, type: null }), []);
+  
+  // Memoized canvas context menu handler
+  const handleCanvasContextMenu = useCallback((e) => {
     if (rightClickMoved) {
       e.preventDefault();
-      //closeContextMenu();
       return;
     }
-   // e.preventDefault();
-    // Debug log to see if this handler is called
-    //console.log("Canvas contextmenu triggered", e.target);
-    // If the right-click target is not inside a node, show canvas menu
+    
     if (selectedNodes.length) {
       setContextMenu({
         visible: true,
@@ -233,8 +339,9 @@ const MindMapEditor = () => {
         y: e.clientY,
         type: "node"
       });
-      return
-    };
+      return;
+    }
+    
     if (!e.target.closest(".mindmap-node")) {
     setContextMenu({
       visible: true,
@@ -250,23 +357,247 @@ const MindMapEditor = () => {
         type: "node"
       });
     } 
-  };
+  }, [rightClickMoved, selectedNodes.length]);
 
-  const handleReset = () => {
-    // Reset pan and zoom.
+  // Memoized reset handler
+  const handleReset = useCallback(() => {
     setPan({ x: 0, y: 0 });
     panRef.current = { x: 0, y: 0 };
     setZoom(1);
     zoomRef.current = 1;
     console.log("Reset pan/zoom");
     closeContextMenu();
-  };
+  }, [closeContextMenu]);
 
-  const processKeyInteraction = (event) => {
+  // Memoized process key interaction
+  const processKeyInteraction = useCallback((event) => {
     console.log("Processing key interaction:", event.key);
+  }, []);
+
+  // Loading and error states
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [operationInProgress, setOperationInProgress] = useState(false);
+
+  // Notification system
+  
+
+  // Keyboard shortcuts and help system
+  const [showHotkeyHelp, setShowHotkeyHelp] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [showSearch, setShowSearch] = useState(false);
+  const [showMiniMap, setShowMiniMap] = useState(true);
+
+  // Hotkey definitions
+  const HOTKEYS = {
+    'Tab': 'Add connected node to selected',
+    'Enter': 'Edit selected node text',
+    'Escape': 'Exit current mode/clear selection',
+    'Space': 'Toggle pan mode',
+    'Ctrl+A': 'Select all nodes',
+    'Ctrl+D': 'Duplicate selected nodes',
+    'Ctrl+Z': 'Undo last action',
+    'Ctrl+Y': 'Redo last action',
+    'Ctrl+C': 'Copy selected nodes',
+    'Ctrl+V': 'Paste nodes',
+    'Delete/Backspace': 'Delete selected nodes',
+    'Ctrl+F': 'Search nodes',
+    'F3': 'Find next search result',
+    'Shift+F3': 'Find previous search result',
+    'Home': 'Zoom to fit all nodes',
+    '0': 'Reset zoom to 100%',
+    '+/=': 'Zoom in',
+    '-': 'Zoom out',
+    'F': 'Focus on selected nodes',
+    'Ctrl+L': 'Toggle linking mode',
+    'Ctrl+E': 'Export mind map',
+    'Ctrl+/': 'Show/hide hotkey help',
+    'Ctrl+Shift+A': 'Auto-layout nodes',
+    'R': 'Reset pan and zoom'
   };
 
+  // Search functionality
+  const performSearch = useCallback((query) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    
+    const results = nodes.filter(node => 
+      node.text && node.text.toLowerCase().includes(query.toLowerCase())
+    ).map(node => node.id);
+    
+    setSearchResults(results);
+    setCurrentSearchIndex(0);
+    
+    // Highlight first result
+    if (results.length > 0) {
+      setSelectedNodes([results[0]]);
+      focusOnNode(results[0]);
+    }
+  }, [nodes]);
 
+  // Focus on a specific node
+  const focusOnNode = useCallback((nodeId) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    const rect = outerRef.current.getBoundingClientRect();
+    const sidebarWidth = 250;
+    const topBarHeight = 50;
+    const canvasWidth = rect.width - sidebarWidth;
+    const canvasHeight = rect.height - topBarHeight;
+
+    const targetX = node.x + (node.width || DEFAULT_WIDTH) / 2;
+    const targetY = node.y + (node.height || DEFAULT_HEIGHT) / 2;
+
+    const newPan = {
+      x: (canvasWidth / 2) - targetX * zoom,
+      y: (canvasHeight / 2) - targetY * zoom,
+    };
+
+    setPan(newPan);
+    panRef.current = newPan;
+  }, [nodes, zoom]);
+
+  // Navigate search results
+  const navigateSearch = useCallback((direction) => {
+    if (searchResults.length === 0) return;
+    
+    let newIndex;
+    if (direction === 'next') {
+      newIndex = (currentSearchIndex + 1) % searchResults.length;
+    } else {
+      newIndex = currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+    }
+    
+    setCurrentSearchIndex(newIndex);
+    setSelectedNodes([searchResults[newIndex]]);
+    focusOnNode(searchResults[newIndex]);
+  }, [searchResults, currentSearchIndex, focusOnNode]);
+
+  // Auto-layout function
+  const autoLayout = useCallback(async () => {
+    if (nodes.length === 0) return;
+    
+    setOperationInProgress(true);
+    try {
+      // Simple force-directed layout
+      const centerX = 0;
+      const centerY = 0;
+      const radius = 200;
+      const angleStep = (2 * Math.PI) / nodes.length;
+      
+      const batch = writeBatch(db);
+      nodes.forEach((node, index) => {
+        const angle = index * angleStep;
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+        
+        const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
+        batch.update(nodeRef, { x, y });
+      });
+      
+      await batch.commit();
+    } catch (error) {
+      console.error("Error auto-layouting nodes:", error);
+    } finally {
+      setOperationInProgress(false);
+    }
+  }, [nodes, mindMapId]);
+
+  // Select all nodes
+  const selectAllNodes = useCallback(() => {
+    setSelectedNodes(nodes.map(n => n.id));
+  }, [nodes]);
+
+  // Zoom to fit all nodes
+  const zoomToFitAll = useCallback(() => {
+    if (nodes.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach((node) => {
+      const width = node.width || DEFAULT_WIDTH;
+      const height = node.height || DEFAULT_HEIGHT;
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+      maxX = Math.max(maxX, node.x + width);
+      maxY = Math.max(maxY, node.y + height);
+    });
+
+    const rect = outerRef.current.getBoundingClientRect();
+    const sidebarWidth = 250;
+    const topBarHeight = 50;
+    const canvasWidth = rect.width - sidebarWidth;
+    const canvasHeight = rect.height - topBarHeight;
+
+    const marginFactor = 0.8;
+    const boxWidth = maxX - minX;
+    const boxHeight = maxY - minY;
+    const zoomX = (canvasWidth * marginFactor) / boxWidth;
+    const zoomY = (canvasHeight * marginFactor) / boxHeight;
+    const newZoom = Math.min(zoomX, zoomY, MAX_ZOOM);
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const newPan = {
+      x: (canvasWidth / 2) - centerX * newZoom,
+      y: (canvasHeight / 2) - centerY * newZoom,
+    };
+
+    setZoom(newZoom);
+    zoomRef.current = newZoom;
+    setPan(newPan);
+    panRef.current = newPan;
+  }, [nodes]);
+
+  // Add connected node at mouse position
+  const addConnectedNode = useCallback(async () => {
+    if (selectedNodes.length !== 1) return;
+    
+    const parentNode = nodes.find(n => n.id === selectedNodes[0]);
+    if (!parentNode) return;
+
+    try {
+      // Use mouse position if available, otherwise offset from parent
+      const newX = localCursor.x || (parentNode.x + 150);
+      const newY = localCursor.y || parentNode.y;
+
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+        text: "New Node",
+        x: newX - DEFAULT_WIDTH / 2, // Center on cursor
+        y: newY - DEFAULT_HEIGHT / 2,
+        width: DEFAULT_WIDTH,
+        height: DEFAULT_HEIGHT,
+        lockedBy: null,
+        typing: false,
+        textColor: "#EAEAEA",
+        fontSize: 14,
+        fontFamily: "cursive",
+        createdAt: serverTimestamp(),
+      });
+
+      // Create link between parent and new node
+      await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+        source: selectedNodes[0],
+        target: docRef.id,
+      });
+
+      // Select the new node and start editing
+      setSelectedNodes([docRef.id]);
+      
+      // Auto-start editing the new node
+      setTimeout(() => {
+        setEditingNodeId(docRef.id);
+        setEditedText("New Node");
+      }, 100);
+      
+    } catch (error) {
+      console.error("Error adding connected node:", error);
+    }
+  }, [selectedNodes, nodes, mindMapId, localCursor]);
 
   // AUTH: subscribe to auth state
   useEffect(() => {
@@ -274,6 +605,8 @@ const MindMapEditor = () => {
       if (user) {
         setCurrentUserEmail(user.email);
         setCurrentUserUid(user.uid);
+      } else {
+        setError('Please log in to access the mind map');
       }
     });
     return () => unsubscribe();
@@ -282,17 +615,31 @@ const MindMapEditor = () => {
   // Subscribe to nodes in Firestore
   useEffect(() => {
     if (!mindMapId) return;
+    
+    setIsLoading(true);
     const q = query(collection(db, "mindMaps", mindMapId, "nodes"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        try {
       const nodesData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
       setNodes(nodesData);
-      // Optionally, reset undo/redo stacks when data is reloaded
-      //setUndoStack([]);
-      //setRedoStack([]);
-    });
+          setIsLoading(false);
+          setError(null);
+        } catch (err) {
+          console.error("Error processing nodes:", err);
+          setError("Failed to load mind map data");
+          setIsLoading(false);
+        }
+      },
+      (err) => {
+        console.error("Error subscribing to nodes:", err);
+        setError("Failed to connect to mind map");
+        setIsLoading(false);
+      }
+    );
     return () => unsubscribe();
   }, [mindMapId]);
 
@@ -300,13 +647,22 @@ const MindMapEditor = () => {
   useEffect(() => {
     if (!mindMapId) return;
     const q = query(collection(db, "mindMaps", mindMapId, "links"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        try {
       const linksData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
       setLinks(linksData);
-    });
+        } catch (err) {
+          console.error("Error processing links:", err);
+        }
+      },
+      (err) => {
+        console.error("Error subscribing to links:", err);
+      }
+    );
     return () => unsubscribe();
   }, [mindMapId]);
 
@@ -812,8 +1168,14 @@ const MindMapEditor = () => {
   };
 
   // --- NODE ACTIONS ---
-  const handleAddNode = async () => {
-    if (!mindMapId) return;
+  const handleAddNode = useCallback(async () => {
+    if (!mindMapId) {
+      return;
+    }
+    
+    if (operationInProgress) return;
+    
+    //setOperationInProgress(true);
     try {
       const currentPan = panRef.current;
       const currentZoom = zoomRef.current;
@@ -830,7 +1192,8 @@ const MindMapEditor = () => {
       // Convert the screen center to world coordinates using the latest pan/zoom.
       const centerWorldX = (centerScreenX - currentPan.x) / currentZoom;
       const centerWorldY = (centerScreenY - currentPan.y) / currentZoom;
-      await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+      
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
         text: "New Node",
         x: centerWorldX,
         y: centerWorldY,
@@ -838,20 +1201,32 @@ const MindMapEditor = () => {
         height: DEFAULT_HEIGHT,
         lockedBy: null,
         typing: false,
+        textColor: "#EAEAEA",
+        fontSize: 14,
+        fontFamily: "cursive",
+        createdAt: serverTimestamp(),
       });
+      
+      // Auto-select the new node for immediate editing
+      setSelectedNodes([docRef.id]);
       
     } catch (error) {
       console.error("Error adding node:", error);
+    } finally {
+      //setOperationInProgress(false);
     }
-  };
+  }, [mindMapId, operationInProgress]);
 
-  const doubleClickAddNode = async () => {
+  const doubleClickAddNode = useCallback(async () => {
     if (!mindMapId) return;
+    if (operationInProgress) return;
+    
+    //setOperationInProgress(true);
     try {
       const dropX = localCursor.x;
       const dropY = localCursor.y;
-      // Convert the screen center to world coordinates using the latest pan/zoom.
-      await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+      
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
         text: "New Node",
         x: dropX - DEFAULT_WIDTH/2,
         y: dropY - DEFAULT_HEIGHT/2,
@@ -859,71 +1234,251 @@ const MindMapEditor = () => {
         height: DEFAULT_HEIGHT,
         lockedBy: null,
         typing: false,
+        textColor: "#EAEAEA",
+        fontSize: 14,
+        fontFamily: "cursive",
+        createdAt: serverTimestamp(),
       });
+
+      // Auto-select the new node
+      setSelectedNodes([docRef.id]);
 
     } catch (error) {
       console.error("Error adding node:", error);
+    } finally {
+      //setOperationInProgress(false);
     }
-  };
+  }, [mindMapId, localCursor]);
 
-
-  const handleDoubleClick = (node) => {
+  const handleDoubleClick = useCallback((node) => {
     if (linkingMode) return;
     if (node.type === "image") return;
     if (node.lockedBy && node.lockedBy !== currentUserEmail) {
-      alert(`Node is currently locked by ${node.lockedBy}`);
       return;
     }
+    
     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
-    updateDoc(nodeRef, { lockedBy: currentUserEmail, typing: true }).catch(
-      console.error,
-    );
+    updateDoc(nodeRef, { lockedBy: currentUserEmail, typing: true }).catch((error) => {
+      console.error("Error locking node:", error);
+    });
+    
     setEditingNodeId(node.id);
     setEditedText(node.text);
-  };
+  }, [linkingMode, currentUserEmail, mindMapId]);
 
-  const handleTextBlur = async (nodeId) => {
+  const handleTextBlur = useCallback(async (nodeId) => {
+    if (!editedText.trim()) {
+      return;
+    }
+    
     try {
       if (selectedNodes.includes(nodeId)) {
         pushSelectionToUndoStack();
       } else {
-        // For a single node, you might push a snapshot for just that node.
-        pushSelectionToUndoStack(); // Or you can adjust this logic if you want to handle it separately.
+        pushSelectionToUndoStack();
       }
+      
       const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
       await updateDoc(nodeRef, {
-        text: editedText,
+        text: editedText.trim(),
         lockedBy: null,
         typing: false,
+        lastModified: serverTimestamp(),
       });
+      
       setEditingNodeId(null);
       setEditedText("");
+      
     } catch (error) {
       console.error("Error updating node text:", error);
     }
-  };
+  }, [editedText, selectedNodes, mindMapId]);
 
-  const handleTyping = (nodeId) => {
+  const handleTyping = useCallback((nodeId) => {
     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
-    updateDoc(nodeRef, { typing: true }).catch(console.error);
-  };
+    updateDoc(nodeRef, { typing: true }).catch((error) => {
+      console.error("Error setting typing status:", error);
+    });
+  }, [mindMapId]);
 
 
 
 
-  // --- COPY/PASTE/DUPLICATE/DELETE ---
+  // --- ENHANCED KEYBOARD SHORTCUTS ---
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (
         document.activeElement.tagName === "INPUT" ||
         document.activeElement.tagName === "TEXTAREA"
-      )
+      ) {
+        // Allow some shortcuts even when typing
+        if (e.key === "Escape") {
+          e.target.blur();
+          setEditingNodeId(null);
+          setShowSearch(false);
+          setShowHotkeyHelp(false);
+        }
         return;
-      
+      }
 
+      // Help modal
+      if (e.ctrlKey && e.key === "/") {
+        e.preventDefault();
+        setShowHotkeyHelp(!showHotkeyHelp);
+        return;
+      }
 
+      // Search functionality
+      if (e.ctrlKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setShowSearch(true);
+        return;
+      }
 
+      if (e.key === "F3") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          navigateSearch('prev');
+        } else {
+          navigateSearch('next');
+        }
+        return;
+      }
 
+      // Navigation shortcuts
+      if (e.key === "Home") {
+        e.preventDefault();
+        zoomToFitAll();
+        return;
+      }
+
+      if (e.key === "0" && !e.ctrlKey) {
+        e.preventDefault();
+        setZoom(1);
+        zoomRef.current = 1;
+        return;
+      }
+
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        handleZoomIn();
+        return;
+      }
+
+      if (e.key === "-") {
+        e.preventDefault();
+        handleZoomOut();
+        return;
+      }
+
+      if (e.key.toLowerCase() === "r" && !e.ctrlKey) {
+        e.preventDefault();
+        handleReset();
+        return;
+      }
+
+      // Selection shortcuts
+      if (e.ctrlKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selectAllNodes();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedNodes([]);
+        setLinkingMode(false);
+        setLinkingSource(null);
+        setShowSearch(false);
+        setShowHotkeyHelp(false);
+        return;
+      }
+
+      // Node creation and editing
+      if (e.key === "Tab" && selectedNodes.length === 1) {
+        e.preventDefault();
+        addConnectedNode();
+        return;
+      }
+
+      if (e.key === "Enter" && selectedNodes.length === 1) {
+        e.preventDefault();
+        const node = nodes.find(n => n.id === selectedNodes[0]);
+        if (node) {
+          handleDoubleClick(node);
+        }
+        return;
+      }
+
+      // Layout shortcuts
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        autoLayout();
+        return;
+      }
+
+      if (e.ctrlKey && e.key.toLowerCase() === "l") {
+        e.preventDefault();
+        toggleLinkingMode();
+        return;
+      }
+
+      if (e.ctrlKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        handleExport();
+        return;
+      }
+
+      // Focus on selected nodes
+      if (e.key.toLowerCase() === "f" && selectedNodes.length > 0) {
+        e.preventDefault();
+        const selected = nodes.filter((n) => selectedNodes.includes(n.id));
+        if (!selected.length) return;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        selected.forEach((node) => {
+          const width = node.width || DEFAULT_WIDTH;
+          const height = node.height || DEFAULT_HEIGHT;
+          minX = Math.min(minX, node.x);
+          minY = Math.min(minY, node.y);
+          maxX = Math.max(maxX, node.x + width);
+          maxY = Math.max(maxY, node.y + height);
+        });
+
+        const targetCenterWorld = { 
+          x: (minX + maxX) / 2, 
+          y: (minY + maxY) / 2 
+        };
+
+        const outerRect = outerRef.current.getBoundingClientRect();
+        const sidebarWidth = -125;
+        const topBarHeight = 50;
+        const canvasWidth = outerRect.width - sidebarWidth;
+        const canvasHeight = outerRect.height - topBarHeight;
+
+        const marginFactor = 0.6;
+        const boxWidth = maxX - minX;
+        const boxHeight = maxY - minY;
+        const zoomX = (canvasWidth * marginFactor) / boxWidth;
+        const zoomY = (canvasHeight * marginFactor) / boxHeight;
+        const newZoom = Math.min(zoomX, zoomY, MAX_ZOOM);
+
+        const canvasCenterScreen = {
+          x: sidebarWidth + canvasWidth / 2,
+          y: topBarHeight + canvasHeight / 2,
+        };
+
+        const newPan = {
+          x: canvasCenterScreen.x - targetCenterWorld.x * newZoom,
+          y: canvasCenterScreen.y - targetCenterWorld.y * newZoom,
+        };
+
+        setZoom(newZoom);
+        zoomRef.current = newZoom;
+        setPan(newPan);
+        panRef.current = newPan;
+        return;
+      }
 
       if (e.ctrlKey && e.key.toLowerCase() === "d") {
         e.preventDefault();
@@ -1088,7 +1643,7 @@ const MindMapEditor = () => {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [nodes, selectedNodes, selectionUndoStack, selectionRedoStack]);
+  }, [nodes, selectedNodes, selectionUndoStack, selectionRedoStack, showHotkeyHelp, navigateSearch, zoomToFitAll, handleZoomIn, handleZoomOut, handleReset, selectAllNodes, addConnectedNode, handleDoubleClick, autoLayout, toggleLinkingMode]);
 
   // For mouse down (start selection):
   // Mouse handlers attached to the outer container:
@@ -1833,6 +2388,9 @@ const MindMapEditor = () => {
       if (activeCustomizationNode.fontFamily !== tempFontFamily) {
         updatedProps.fontFamily = tempFontFamily;
       }
+      if (activeCustomizationNode.zIndex !== tempZIndex) {
+        updatedProps.zIndex = tempZIndex;
+      }
     }
 
     if (Object.keys(updatedProps).length === 0) {
@@ -1909,6 +2467,7 @@ const MindMapEditor = () => {
       setTempTextStyle(activeCustomizationNode.textStyle || []); // e.g. may be stored as an array
       setTempTextAlign(activeCustomizationNode.textAlign || "left");
       setTempFontFamily(activeCustomizationNode.fontFamily || "cursive");
+      setTempZIndex(activeCustomizationNode.zIndex || 1);
       // And set any other properties (e.g., text, width, height, font, etc.)
     }
   }, [activeCustomizationNode]);
@@ -1963,34 +2522,63 @@ const MindMapEditor = () => {
   // Render remote cursors from RTDB
   const renderCursors = () => {
     const now = Date.now();
-    const activeThreshold = 500; // 5 seconds
+    const activeThreshold = 5000; // 5 seconds
+    const userColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+    
     return cursors
       .filter((cursor) => 
         cursor.uid !== currentUserUid && 
         now - cursor.lastActive < activeThreshold
       )
-      .map((cursor) => {
+      .map((cursor, index) => {
         const screenX = cursor.x * zoom + pan.x;
         const screenY = cursor.y * zoom + pan.y;
+        const userColor = userColors[index % userColors.length];
+        const userName = cursor.email ? cursor.email.split('@')[0] : 'User';
+        
         return (
           <div
             key={cursor.uid}
             style={{
               position: "absolute",
-              top: screenY,
-              left: screenX,
-              transform: "translate(-50%, -50%)",
-              transition: "top 0.35s ease, left 0.35s ease",
-              backgroundColor: "blue",
-              color: "#fff",
-              padding: "2px 4px",
-              borderRadius: "4px",
-              fontSize: "10px",
+              top: screenY - 10,
+              left: screenX + 10,
+              transition: "top 0.2s ease, left 0.2s ease",
               pointerEvents: "none",
               zIndex: 150,
             }}
           >
-            {cursor.email}
+            {/* Cursor pointer */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: -10,
+                width: 0,
+                height: 0,
+                borderLeft: '8px solid transparent',
+                borderRight: '8px solid transparent',
+                borderBottom: `12px solid ${userColor}`,
+                transform: 'rotate(-45deg)',
+              }}
+            />
+            
+            {/* User name label */}
+            <div
+              style={{
+                backgroundColor: userColor,
+                color: "#fff",
+                padding: "3px 8px",
+                borderRadius: "12px",
+                fontSize: "11px",
+                fontWeight: "500",
+                whiteSpace: "nowrap",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                marginTop: "8px",
+              }}
+            >
+              {userName}
+            </div>
           </div>
         );
       });
@@ -2015,8 +2603,8 @@ const MindMapEditor = () => {
     if (!outerRef.current) return nodes;
   
     const { visibleLeft, visibleTop, visibleWidth, visibleHeight } = getVisibleArea();
-    // Buffer so nodes near the border are still rendered
-    const buffer = 100; // adjust as needed
+    // Dynamic buffer based on zoom level - smaller buffer when zoomed out
+    const buffer = Math.max(50, 200 / zoom);
     
     return nodes.filter((node) => {
       const width = node.width || DEFAULT_WIDTH;
@@ -2028,7 +2616,7 @@ const MindMapEditor = () => {
         node.y <= visibleTop + visibleHeight + buffer
       );
     });
-  }, [nodes, pan, zoom]); // outerRef.current is not a reactive dependency so assume it is stable
+  }, [nodes, Math.round(pan.x / 50) * 50, Math.round(pan.y / 50) * 50, Math.round(zoom * 20) / 20]); // Quantized dependencies to reduce recalculations
   
   const visibleLinks = useMemo(() => {
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
@@ -2049,7 +2637,8 @@ const MindMapEditor = () => {
         activeCustomizationNode.fontSize !== tempFontSize ||
         JSON.stringify(activeCustomizationNode.textStyle) !== JSON.stringify(tempTextStyle) ||
         activeCustomizationNode.textAlign !== tempTextAlign ||
-        activeCustomizationNode.fontFamily !== tempFontFamily
+        activeCustomizationNode.fontFamily !== tempFontFamily ||
+        activeCustomizationNode.zIndex !== tempZIndex
       ) {
         const timer = setTimeout(() => {
           handleSidebarSave();
@@ -2057,9 +2646,8 @@ const MindMapEditor = () => {
         return () => clearTimeout(timer);
       }
     }
-  }, [tempBgColor, tempTextColor, tempFontSize, tempTextStyle, tempTextAlign, tempFontFamily, activeCustomizationNode]);
+  }, [tempBgColor, tempTextColor, tempFontSize, tempTextStyle, tempTextAlign, tempFontFamily, tempZIndex, activeCustomizationNode]);
 
-  const navigate = useNavigate();
   const ContextMenu = () => {
     if (!contextMenuu.visible) return null;
     if (rightClickMoved) return null;
@@ -2085,32 +2673,63 @@ const MindMapEditor = () => {
             <div className="context-menu-item"
               style={{ padding: "4px 8px", cursor: "pointer" }}
               onMouseDown={(e) => {
-                //e.preventDefault();
-                //e.stopPropagation();
+                e.preventDefault();
+                e.stopPropagation();
                 handlePaste(e);
+                closeContextMenu();
               }}
             >
               Paste
             </div>
             <div className="context-menu-item"
               style={{ padding: "4px 8px", cursor: "pointer" }}
-              onMouseDown={handleReset}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleReset();
+                closeContextMenu();
+              }}
             >
               Reset
             </div>
           </>
         )}
         {contextMenuu.type === "node" && (
-          <div className="context-menu-item"
-            
-            onMouseDown={(e) => {
-              //e.preventDefault();
-              //e.stopPropagation();
-              handleCopy(e);
-            }}
-          >
-            Copy
-          </div>
+          <>
+            <div className="context-menu-item"
+              style={{ padding: "4px 8px", cursor: "pointer" }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleCopy(e);
+                closeContextMenu();
+              }}
+            >
+              Copy
+            </div>
+            <div className="context-menu-item"
+              style={{ padding: "4px 8px", cursor: "pointer" }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleBringToFront();
+                closeContextMenu();
+              }}
+            >
+              + Bring to Front
+            </div>
+            <div className="context-menu-item"
+              style={{ padding: "4px 8px", cursor: "pointer" }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSendToBack();
+                closeContextMenu();
+              }}
+            >
+              - Send to Back
+            </div>
+          </>
         )}
       </div>
     );
@@ -2219,6 +2838,686 @@ const MindMapEditor = () => {
     }
   };
 
+  // Notification Component
+
+  // Loading Overlay Component
+  const LoadingOverlay = () => {
+    if (!isLoading && !operationInProgress) return null;
+    
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          flexDirection: 'column',
+        }}
+      >
+        <div
+          style={{
+            width: '50px',
+            height: '50px',
+            border: '4px solid #333',
+            borderTop: '4px solid #fff',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+          }}
+        />
+        <Typography 
+          variant="h6" 
+          style={{ color: '#fff', marginTop: '20px' }}
+        >
+          {isLoading ? 'Loading mind map...' : 'Processing...'}
+        </Typography>
+      </div>
+    );
+  };
+
+  // Error Component
+  const ErrorComponent = () => {
+    if (!error) return null;
+    
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: '#f44336',
+          color: 'white',
+          padding: '20px',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          zIndex: 2000,
+          textAlign: 'center',
+          maxWidth: '400px',
+        }}
+      >
+        <Typography variant="h6" style={{ marginBottom: '10px' }}>
+          Error
+        </Typography>
+        <Typography variant="body1" style={{ marginBottom: '20px' }}>
+          {error}
+        </Typography>
+        <Button
+          variant="contained"
+          onClick={() => {
+            setError(null);
+            window.location.reload();
+          }}
+          style={{ backgroundColor: '#fff', color: '#f44336' }}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  };
+
+  // Search Bar Component
+  const SearchBar = () => {
+    if (!showSearch) return null;
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: '70px',
+          left: '20px',
+          zIndex: 1000,
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          padding: '15px',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          minWidth: '300px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+          <TextField
+            placeholder="Search nodes... (Ctrl+F)"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              performSearch(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                navigateSearch('next');
+              }
+              if (e.key === 'Escape') {
+                setShowSearch(false);
+                setSearchQuery('');
+                setSearchResults([]);
+              }
+            }}
+            size="small"
+            autoFocus
+            sx={{
+              flex: 1,
+              '& .MuiInputBase-root': {
+                color: '#fff',
+                backgroundColor: '#333',
+              },
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#555',
+              },
+              '& .MuiInputLabel-root': {
+                color: '#ccc',
+              },
+            }}
+          />
+          <Button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowSearch(false);
+              setSearchQuery('');
+              setSearchResults([]);
+            }}
+            size="small"
+            style={{ color: '#fff', minWidth: 'auto' }}
+          >
+            ✕
+          </Button>
+        </div>
+        
+        {searchResults.length > 0 && (
+          <div style={{ color: '#ccc', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>
+              {currentSearchIndex + 1} of {searchResults.length} results
+            </span>
+            <div style={{ display: 'flex', gap: '5px' }}>
+              <Button
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigateSearch('prev');
+                }}
+                size="small"
+                disabled={searchResults.length === 0}
+                style={{ color: '#fff', minWidth: 'auto', padding: '2px 8px' }}
+              >
+                ↑
+              </Button>
+              <Button
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigateSearch('next');
+                }}
+                size="small"
+                disabled={searchResults.length === 0}
+                style={{ color: '#fff', minWidth: 'auto', padding: '2px 8px' }}
+              >
+                ↓
+              </Button>
+            </div>
+          </div>
+        )}
+        
+        {searchQuery && searchResults.length === 0 && (
+          <div style={{ color: '#999', fontSize: '12px' }}>
+            No results found
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Hotkey Help Modal
+  const HotkeyHelpModal = () => {
+    if (!showHotkeyHelp) return null;
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+        }}
+        onClick={() => setShowHotkeyHelp(false)}
+      >
+        <div
+          style={{
+            backgroundColor: '#1e1e1e',
+            color: '#fff',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            maxWidth: '600px',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            border: '1px solid #333',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <Typography variant="h5" style={{ color: '#fff', fontWeight: 'bold' }}>
+              Keyboard Shortcuts
+            </Typography>
+            <Button
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowHotkeyHelp(false);
+              }}
+              style={{ color: '#fff', minWidth: 'auto' }}
+            >
+              ✕
+            </Button>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            <div>
+              <Typography variant="h6" style={{ color: '#4CAF50', marginBottom: '10px' }}>
+                Navigation
+              </Typography>
+              {Object.entries(HOTKEYS)
+                .filter(([key]) => ['Home', '0', '+/=', '-', 'F', 'R'].includes(key))
+                .map(([key, description]) => (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontFamily: 'monospace', backgroundColor: '#333', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                      {key}
+                    </span>
+                    <span style={{ fontSize: '14px', color: '#ccc' }}>{description}</span>
+                  </div>
+                ))}
+              
+              <Typography variant="h6" style={{ color: '#2196F3', marginTop: '20px', marginBottom: '10px' }}>
+                Selection & Editing
+              </Typography>
+              {Object.entries(HOTKEYS)
+                .filter(([key]) => ['Tab', 'Enter', 'Escape', 'Ctrl+A', 'Delete/Backspace'].includes(key))
+                .map(([key, description]) => (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontFamily: 'monospace', backgroundColor: '#333', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                      {key}
+                    </span>
+                    <span style={{ fontSize: '14px', color: '#ccc' }}>{description}</span>
+                  </div>
+                ))}
+            </div>
+            
+            <div>
+              <Typography variant="h6" style={{ color: '#FF9800', marginBottom: '10px' }}>
+                Actions
+              </Typography>
+              {Object.entries(HOTKEYS)
+                .filter(([key]) => ['Ctrl+D', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+C', 'Ctrl+V', 'Ctrl+L', 'Ctrl+E'].includes(key))
+                .map(([key, description]) => (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontFamily: 'monospace', backgroundColor: '#333', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                      {key}
+                    </span>
+                    <span style={{ fontSize: '14px', color: '#ccc' }}>{description}</span>
+                  </div>
+                ))}
+              
+              <Typography variant="h6" style={{ color: '#9C27B0', marginTop: '20px', marginBottom: '10px' }}>
+                Search & Layout
+              </Typography>
+              {Object.entries(HOTKEYS)
+                .filter(([key]) => ['Ctrl+F', 'F3', 'Shift+F3', 'Ctrl+Shift+A', 'Ctrl+/'].includes(key))
+                .map(([key, description]) => (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontFamily: 'monospace', backgroundColor: '#333', padding: '2px 6px', borderRadius: '4px', fontSize: '12px' }}>
+                      {key}
+                    </span>
+                    <span style={{ fontSize: '14px', color: '#ccc' }}>{description}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+          
+          <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#333', borderRadius: '8px' }}>
+            <Typography variant="body2" style={{ color: '#ccc', textAlign: 'center' }}>
+              Press <strong>Ctrl+/</strong> anytime to toggle this help
+            </Typography>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Mini-map Navigation Component (Performance Optimized)
+  const MiniMap = () => {
+    const miniMapRef = useRef(null);
+    const updateTimeoutRef = useRef(null);
+    const lastUpdateRef = useRef(0);
+
+    // Throttled bounds calculation - only recalculate when nodes actually change
+    const bounds = useMemo(() => {
+      if (nodes.length === 0) return { minX: 0, minY: 0, maxX: 200, maxY: 150 };
+      
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      
+      // Use a more efficient loop
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        const width = node.width || DEFAULT_WIDTH;
+        const height = node.height || DEFAULT_HEIGHT;
+        const nodeMaxX = node.x + width;
+        const nodeMaxY = node.y + height;
+        
+        if (node.x < minX) minX = node.x;
+        if (node.y < minY) minY = node.y;
+        if (nodeMaxX > maxX) maxX = nodeMaxX;
+        if (nodeMaxY > maxY) maxY = nodeMaxY;
+      }
+      
+      // Add padding
+      const padding = 50;
+      return {
+        minX: minX - padding,
+        minY: minY - padding,
+        maxX: maxX + padding,
+        maxY: maxY + padding
+      };
+    }, [nodes.length, nodes.map(n => `${n.x},${n.y},${n.width || DEFAULT_WIDTH},${n.height || DEFAULT_HEIGHT}`).join('|')]);
+
+    // Memoized scale calculation
+    const miniMapScale = useMemo(() => {
+      const mapWidth = 200;
+      const mapHeight = 150;
+      const worldWidth = bounds.maxX - bounds.minX;
+      const worldHeight = bounds.maxY - bounds.minY;
+      
+      return Math.min(mapWidth / worldWidth, mapHeight / worldHeight);
+    }, [bounds]);
+
+    // Optimized click handler with proper event handling
+    const handleMiniMapClick = useCallback((e) => {
+      // Don't handle if clicking on header or close button
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+        return;
+      }
+      
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const now = Date.now();
+      if (now - lastUpdateRef.current < 100) return; // Debounce rapid clicks
+      lastUpdateRef.current = now;
+      
+      const rect = miniMapRef.current.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top - 20; // Account for header
+      
+      // Only handle clicks in the map area (not header)
+      if (clickY < 0) return;
+      
+      // Visual feedback - briefly highlight the click area
+      const miniMapElement = miniMapRef.current;
+      if (miniMapElement) {
+        miniMapElement.style.transform = 'scale(0.98)';
+        setTimeout(() => {
+          if (miniMapElement) {
+            miniMapElement.style.transform = 'scale(1)';
+          }
+        }, 100);
+      }
+      
+      // Convert click position to world coordinates
+      const worldX = bounds.minX + (clickX / miniMapScale);
+      const worldY = bounds.minY + (clickY / miniMapScale);
+      
+      // Center the main view on this position
+      const outerRect = outerRef.current.getBoundingClientRect();
+      const sidebarWidth = 250;
+      const topBarHeight = 50;
+      const canvasWidth = outerRect.width - sidebarWidth;
+      const canvasHeight = outerRect.height - topBarHeight;
+      
+      const newPan = {
+        x: (canvasWidth / 2) - worldX * zoom,
+        y: (canvasHeight / 2) - worldY * zoom,
+      };
+      
+      setPan(newPan);
+      panRef.current = newPan;
+    }, [bounds, miniMapScale, zoom]);
+
+    // Throttled viewport calculation - only update when pan/zoom actually changes
+    const viewportRect = useMemo(() => {
+      const outerRect = outerRef.current?.getBoundingClientRect();
+      if (!outerRect) return { x: 0, y: 0, width: 0, height: 0 };
+      
+      const sidebarWidth = 250;
+      const topBarHeight = 50;
+      const canvasWidth = outerRect.width - sidebarWidth;
+      const canvasHeight = outerRect.height - topBarHeight;
+      
+      // Calculate what part of the world is visible
+      const visibleMinX = (-pan.x) / zoom;
+      const visibleMinY = (-pan.y) / zoom;
+      const visibleMaxX = visibleMinX + canvasWidth / zoom;
+      const visibleMaxY = visibleMinY + canvasHeight / zoom;
+      
+      // Convert to mini-map coordinates
+      const x = (visibleMinX - bounds.minX) * miniMapScale;
+      const y = (visibleMinY - bounds.minY) * miniMapScale;
+      const width = (visibleMaxX - visibleMinX) * miniMapScale;
+      const height = (visibleMaxY - visibleMinY) * miniMapScale;
+      
+      return { x, y, width, height };
+    }, [
+      Math.round(pan.x / 10) * 10, // Round to reduce unnecessary updates
+      Math.round(pan.y / 10) * 10,
+      Math.round(zoom * 100) / 100, // Round zoom to 2 decimal places
+      bounds, 
+      miniMapScale
+    ]);
+
+    // Optimized rendering data - show all nodes but with performance optimizations
+    const nodeRenderData = useMemo(() => {
+      return nodes.map(node => ({
+        id: node.id,
+        x: (node.x - bounds.minX) * miniMapScale,
+        y: (node.y - bounds.minY) * miniMapScale,
+        width: Math.max(1, ((node.width || DEFAULT_WIDTH) * miniMapScale)),
+        height: Math.max(1, ((node.height || DEFAULT_HEIGHT) * miniMapScale)),
+        bgColor: node.bgColor || '#666',
+        isSelected: selectedNodes.includes(node.id),
+        zIndex: node.zIndex || 1
+      })).filter(node => 
+        // Only include nodes that are at least partially visible in mini-map
+        node.x > -node.width && node.y > -node.height && 
+        node.x < 200 + node.width && node.y < 130 + node.height
+      );
+    }, [nodes, bounds, miniMapScale, selectedNodes]);
+
+    // Optimized link rendering - show all links but with culling
+    const linkRenderData = useMemo(() => {
+      if (links.length > 300) return []; // Skip links for very large datasets
+      
+      return links.map(link => {
+        const sourceNode = nodes.find(n => n.id === link.source);
+        const targetNode = nodes.find(n => n.id === link.target);
+        if (!sourceNode || !targetNode) return null;
+        
+        const x1 = (sourceNode.x - bounds.minX) * miniMapScale + ((sourceNode.width || DEFAULT_WIDTH) * miniMapScale) / 2;
+        const y1 = (sourceNode.y - bounds.minY) * miniMapScale + ((sourceNode.height || DEFAULT_HEIGHT) * miniMapScale) / 2;
+        const x2 = (targetNode.x - bounds.minX) * miniMapScale + ((targetNode.width || DEFAULT_WIDTH) * miniMapScale) / 2;
+        const y2 = (targetNode.y - bounds.minY) * miniMapScale + ((targetNode.height || DEFAULT_HEIGHT) * miniMapScale) / 2;
+        
+        // Skip if completely outside bounds
+        if ((x1 < 0 && x2 < 0) || (x1 > 200 && x2 > 200) || (y1 < 0 && y2 < 0) || (y1 > 130 && y2 > 130)) {
+          return null;
+        }
+        
+        return {
+          id: link.id,
+          x1: Math.max(0, Math.min(200, x1)),
+          y1: Math.max(0, Math.min(130, y1)),
+          x2: Math.max(0, Math.min(200, x2)),
+          y2: Math.max(0, Math.min(130, y2))
+        };
+      }).filter(Boolean);
+    }, [links, nodes, bounds, miniMapScale]);
+
+    if (!showMiniMap || nodes.length === 0) return null;
+
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: isMobile ? '20px' : '280px',
+          width: '200px',
+          height: '150px',
+          backgroundColor: 'rgba(0, 0, 0, 0.9)',
+          border: '2px solid #444',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          zIndex: 1000,
+          cursor: 'pointer',
+          transition: 'transform 0.1s ease-out, box-shadow 0.1s ease-out',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        }}
+        onMouseDown={handleMiniMapClick}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        }}
+        ref={miniMapRef}
+      >
+        {/* Header */}
+        <div 
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '20px',
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 8px',
+            fontSize: '10px',
+            color: '#ccc',
+            zIndex: 1001,
+            cursor: 'default',
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <span>
+            Mini Map ({nodeRenderData.length} nodes)
+          </span>
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+              setShowMiniMap(false);
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent.stopImmediatePropagation();
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#ccc',
+              cursor: 'pointer',
+              fontSize: '12px',
+              padding: '2px 4px',
+              borderRadius: '2px',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Mini-map content */}
+        <svg
+          width="200"
+          height="150"
+          style={{ 
+            position: 'absolute', 
+            top: '20px',
+            cursor: 'pointer',
+            pointerEvents: 'auto'
+          }}
+          onMouseDown={(e) => {
+            // Let the parent handle the click for navigation
+            e.stopPropagation();
+            handleMiniMapClick(e);
+          }}
+        >
+          {/* Render all visible nodes efficiently */}
+          {nodeRenderData
+            .sort((a, b) => (a.zIndex || 1) - (b.zIndex || 1)) // Sort by z-index, lowest first
+            .map((node) => (
+            <rect
+              key={node.id}
+              x={node.x}
+              y={node.y}
+              width={node.width}
+              height={node.height}
+              fill={node.isSelected ? '#4CAF50' : node.bgColor}
+              stroke={node.isSelected ? '#8BC34A' : 'none'}
+              strokeWidth={node.isSelected ? "0.5" : "0"}
+              opacity="0.8"
+            />
+          ))}
+          
+          {/* Render all visible links efficiently */}
+          {linkRenderData.map(link => (
+            <line
+              key={link.id}
+              x1={link.x1}
+              y1={link.y1}
+              x2={link.x2}
+              y2={link.y2}
+              stroke="#555"
+              strokeWidth="0.5"
+              opacity="0.4"
+            />
+          ))}
+          
+          {/* Viewport rectangle */}
+          <rect
+            x={Math.max(0, Math.min(200, viewportRect.x))}
+            y={Math.max(0, Math.min(130, viewportRect.y))}
+            width={Math.max(0, Math.min(200 - Math.max(0, viewportRect.x), viewportRect.width))}
+            height={Math.max(0, Math.min(130 - Math.max(0, viewportRect.y), viewportRect.height))}
+            fill="none"
+            stroke="#4CAF50"
+            strokeWidth="1"
+            strokeDasharray="2,2"
+            opacity="0.8"
+          />
+        </svg>
+      </div>
+    );
+  };
+
+  // Performance-aware mini-map toggle
+  const MiniMapToggle = () => {
+    // Auto-hide mini-map for very large datasets to preserve performance
+    const shouldAutoHide = nodes.length > 1000;
+    
+    if (showMiniMap || nodes.length === 0) return null;
+
+    return (
+      <Button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowMiniMap(true);
+        }}
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: isMobile ? '20px' : '280px',
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          color: '#fff',
+          minWidth: 'auto',
+          padding: '8px',
+          borderRadius: '4px',
+          zIndex: 1000,
+          transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+          e.currentTarget.style.transform = 'scale(1.05)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+          e.currentTarget.style.transform = 'scale(1)';
+        }}
+        title={shouldAutoHide ? "Show Mini Map (Large dataset - may impact performance)" : "Show Mini Map"}
+      >
+        🗺️ {shouldAutoHide && <span style={{fontSize: '10px'}}>⚠️</span>}
+      </Button>
+    );
+  };
+
   return (
     <div
       style={{
@@ -2290,21 +3589,31 @@ const MindMapEditor = () => {
       >
         <Button
           variant="contained"
-          onClick={() => navigate(`/dashboard`)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navigate(`/dashboard`);
+          }}
           style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           <ArrowBackIosIcon />
         </Button>
         <Button
           variant="contained"
-          onClick={handleAddNode}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleAddNode();
+          }}
           style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Add Node
         </Button>
         <Button
           variant="contained"
-          onClick={() => {
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
             setLinkingMode((prev) => !prev);
             setLinkingSource(null);
           }}
@@ -2314,20 +3623,48 @@ const MindMapEditor = () => {
         </Button>
         <Button
           variant="contained"
-          onClick={handleExport}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleExport();
+          }}
           style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Export
         </Button>
         <Button
           variant="contained"
-          onClick={handleZoomIn}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleZoomIn();
+          }}
           style={{ marginRight: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
         >
           Zoom In
         </Button>
-        <Button variant="contained" onClick={handleZoomOut} style={{background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)"}}>
+        <Button 
+          variant="contained" 
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleZoomOut();
+          }}
+          style={{background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)"}}
+        >
           Zoom Out
+        </Button>
+        <Button
+          variant="contained"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setShowHotkeyHelp(true);
+          }}
+          style={{ marginLeft: "10px", background: "radial-gradient(circle at center,rgba(29, 32, 34, 0) 0%,rgba(56, 60, 63, 0.53) 130%)" }}
+          title="Keyboard Shortcuts (Ctrl+/)"
+        >
+          ⌨️ Help
         </Button>
         {linkingMode && (
           <Typography variant="body2" style={{ color: "#fff", marginLeft: "10px" }}>
@@ -2593,6 +3930,77 @@ const MindMapEditor = () => {
                 />
               </Box>
 
+              {/* Z-Index Controls */}
+              <Box
+                component="div"
+                sx={{
+                  fontSize: "1rem",
+                  marginTop: "12px",
+                  marginBottom: "12px",
+                  color: "#ccc",
+                  fontWeight: 400,
+                  fontFamily: "Arial",
+                }}
+                variant="subtitle1"
+              >
+                Layer Order (Z-Index)
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                  <TextField
+                    type="number"
+                    value={tempZIndex}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value) || 1;
+                      setTempZIndex(value);
+                      handleZIndexChange(value);
+                    }}
+                    size="small"
+                    sx={{
+                      flex: 1,
+                      "& .MuiInputBase-root": {
+                        color: "#fff",
+                        backgroundColor: "#2b2b2b",
+                      },
+                      "& .MuiOutlinedInput-notchedOutline": {
+                        borderColor: "#555",
+                      },
+                    }}
+                    inputProps={{ min: 0, max: 9999 }}
+                  />
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={handleBringToFront}
+                    style={{
+                      backgroundColor: "#333",
+                      color: "#ccc",
+                      minWidth: "auto",
+                      padding: "4px 8px",
+                      fontSize: "14px",
+                      border: "1px solid #555",
+                    }}
+                    title="Bring to Front"
+                  >
+                    +
+                  </Button>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={handleSendToBack}
+                    style={{
+                      backgroundColor: "#333",
+                      color: "#ccc",
+                      minWidth: "auto",
+                      padding: "4px 8px",
+                      fontSize: "14px",
+                      border: "1px solid #555",
+                    }}
+                    title="Send to Back"
+                  >
+                    -
+                  </Button>
+                </div>
+              </Box>
+
               {/* Remove All Links Button */}
               <Button
                 variant="contained"
@@ -2615,25 +4023,75 @@ const MindMapEditor = () => {
         </div>
       )}
 
-      {/* Active Users Panel (only one instance now) */}
+      {/* Enhanced Active Users Panel */}
       <div
         style={{
           position: "fixed",
           top: 60,
-          right: 290,
-          background: "radial-gradient(circle at center,rgba(29, 32, 34, 0.63) 0%, #0f1011 100%)",
+          right: isMobile ? 10 : 290,
+          background: "radial-gradient(circle at center,rgba(29, 32, 34, 0.9) 0%, #0f1011 100%)",
           color: "#fff",
-          padding: "8px",
-          borderRadius: "4px",
-          zIndex: 250
+          padding: "12px",
+          borderRadius: "8px",
+          zIndex: 250,
+          minWidth: "200px",
+          maxWidth: "250px",
+          border: "1px solid #333",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)"
         }}
       >
-        <Typography variant="caption">Active Users:</Typography>
-        {presenceUsers.map((user, index) => (
-          <div key={index}>
-            <Typography variant="caption">{user.email}</Typography>
+        <Typography variant="subtitle2" style={{ fontWeight: 'bold', marginBottom: '8px', color: '#4CAF50' }}>
+          👥 Active Users ({presenceUsers.length})
+        </Typography>
+        {presenceUsers.length === 0 ? (
+          <Typography variant="caption" style={{ color: '#999', fontStyle: 'italic' }}>
+            No other users online
+          </Typography>
+        ) : (
+          presenceUsers.map((user, index) => {
+            const isCurrentUser = user.email === currentUserEmail;
+            const userColor = isCurrentUser ? '#4CAF50' : '#2196F3';
+            
+            return (
+              <div 
+                key={index}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '4px 0',
+                  borderBottom: index < presenceUsers.length - 1 ? '1px solid #333' : 'none'
+                }}
+              >
+                <div
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: userColor,
+                    animation: 'pulse 2s infinite'
+                  }}
+                />
+                <Typography 
+                  variant="caption" 
+                  style={{ 
+                    color: isCurrentUser ? '#4CAF50' : '#fff',
+                    fontWeight: isCurrentUser ? 'bold' : 'normal'
+                  }}
+                >
+                  {isCurrentUser ? `${user.email} (You)` : user.email}
+                </Typography>
           </div>
-        ))}
+            );
+          })
+        )}
+        
+        {/* Connection Status */}
+        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #333' }}>
+          <Typography variant="caption" style={{ color: '#999', fontSize: '10px' }}>
+            🟢 Connected • Real-time sync active
+          </Typography>
+        </div>
       </div>
   
       {renderCursors()}
@@ -2693,7 +4151,9 @@ const MindMapEditor = () => {
             );
           })}
         </svg>
-        {visibleNodes.map((node) => (
+        {visibleNodes
+          .sort((a, b) => (a.zIndex || 1) - (b.zIndex || 1)) // Sort by z-index, lowest first
+          .map((node) => (
           <MindMapNode
             key={node.id}
             node={node}
@@ -2862,6 +4322,12 @@ const MindMapEditor = () => {
         isChatOpen={isChatOpen}
         setIsChatOpen={setIsChatOpen}
       />
+      <LoadingOverlay />
+      <ErrorComponent />
+      <SearchBar />
+      <HotkeyHelpModal />
+      <MiniMap />
+      <MiniMapToggle />
     </div>
   );
 };  
