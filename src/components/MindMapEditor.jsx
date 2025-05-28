@@ -49,7 +49,7 @@ import {
 } from "@mui/material";
 import Draggable from "react-draggable";
 import PaletteIcon from "@mui/icons-material/Palette";
-import { BlockPicker } from 'react-color';
+import { BlockPicker, ChromePicker } from 'react-color';
 
 import "./new.css";
 import ChatBox from "./ChatBox";
@@ -389,6 +389,8 @@ const MindMapEditor = () => {
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
   const [showSearch, setShowSearch] = useState(false);
   const [showMiniMap, setShowMiniMap] = useState(true);
+  const [showBgColorPicker, setShowBgColorPicker] = useState(false);
+  const [showTextColorPicker, setShowTextColorPicker] = useState(false);
 
   // Hotkey definitions
   const HOTKEYS = {
@@ -791,6 +793,19 @@ const MindMapEditor = () => {
       off(cursorsRef, "value", handleValue);
     };
   }, [mindMapId]);
+
+  // Clean up selectedNodes when nodes change to remove stale node IDs
+  useEffect(() => {
+    if (selectedNodes.length > 0) {
+      const existingNodeIds = nodes.map(node => node.id);
+      const validSelectedNodes = selectedNodes.filter(nodeId => existingNodeIds.includes(nodeId));
+      
+      if (validSelectedNodes.length !== selectedNodes.length) {
+        console.log(`Cleaning up selectedNodes: ${selectedNodes.length - validSelectedNodes.length} stale node IDs removed`);
+        setSelectedNodes(validSelectedNodes);
+      }
+    }
+  }, [nodes]); // Only depend on nodes, not selectedNodes to avoid infinite loops
 
   useEffect(() => {
     if (!outerRef.current) return;
@@ -1299,6 +1314,123 @@ const MindMapEditor = () => {
     updateDoc(nodeRef, { typing: true }).catch((error) => {
       console.error("Error setting typing status:", error);
     });
+  }, [mindMapId]);
+
+  const updateNodeText = useCallback(async (nodeId, newText) => {
+    try {
+      pushSelectionToUndoStack();
+      
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
+      await updateDoc(nodeRef, {
+        text: newText.trim(),
+        lastModified: serverTimestamp(),
+      });
+      
+      // Update local state
+      setNodes((prev) =>
+        prev.map((n) => (n.id === nodeId ? { ...n, text: newText.trim() } : n))
+      );
+      
+    } catch (error) {
+      console.error("Error updating node text:", error);
+      throw error;
+    }
+  }, [mindMapId]);
+
+  // Batch version for AI operations (doesn't push to undo stack individually)
+  const updateNodeTextBatch = useCallback(async (nodeId, newText) => {
+    try {
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
+      await updateDoc(nodeRef, {
+        text: newText.trim(),
+        lastModified: serverTimestamp(),
+      });
+      
+      // Update local state
+      setNodes((prev) =>
+        prev.map((n) => (n.id === nodeId ? { ...n, text: newText.trim() } : n))
+      );
+      
+    } catch (error) {
+      console.error("Error updating node text:", error);
+      throw error;
+    }
+  }, [mindMapId]);
+
+  const addNode = useCallback(async (nodeData) => {
+    try {
+      // Push to undo stack before making changes
+      pushSelectionToUndoStack();
+      
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+        text: nodeData.text || "New Node",
+        x: nodeData.x || 0,
+        y: nodeData.y || 0,
+        width: nodeData.width || DEFAULT_WIDTH,
+        height: nodeData.height || DEFAULT_HEIGHT,
+        lockedBy: null,
+        typing: false,
+        textColor: nodeData.textColor || "#EAEAEA",
+        fontSize: nodeData.fontSize || 14,
+        fontFamily: nodeData.fontFamily || "cursive",
+        bgColor: nodeData.bgColor || null,
+        createdAt: serverTimestamp(),
+      });
+      
+      return docRef.id; // Return the Firebase-generated ID
+    } catch (error) {
+      console.error("Error adding node:", error);
+      throw error;
+    }
+  }, [mindMapId]);
+
+  const addLink = useCallback(async (linkData) => {
+    try {
+      await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+        source: linkData.source,
+        target: linkData.target,
+      });
+    } catch (error) {
+      console.error("Error adding link:", error);
+      throw error;
+    }
+  }, [mindMapId]);
+
+  // Batch versions for AI operations (don't push to undo stack individually)
+  const addNodeBatch = useCallback(async (nodeData) => {
+    try {
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "nodes"), {
+        text: nodeData.text || "New Node",
+        x: nodeData.x || 0,
+        y: nodeData.y || 0,
+        width: nodeData.width || DEFAULT_WIDTH,
+        height: nodeData.height || DEFAULT_HEIGHT,
+        lockedBy: null,
+        typing: false,
+        textColor: nodeData.textColor || "#EAEAEA",
+        fontSize: nodeData.fontSize || 14,
+        fontFamily: nodeData.fontFamily || "cursive",
+        bgColor: nodeData.bgColor || null,
+        createdAt: serverTimestamp(),
+      });
+      
+      return docRef.id;
+    } catch (error) {
+      console.error("Error adding node:", error);
+      throw error;
+    }
+  }, [mindMapId]);
+
+  const addLinkBatch = useCallback(async (linkData) => {
+    try {
+      await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
+        source: linkData.source,
+        target: linkData.target,
+      });
+    } catch (error) {
+      console.error("Error adding link:", error);
+      throw error;
+    }
   }, [mindMapId]);
 
 
@@ -2400,20 +2532,36 @@ const MindMapEditor = () => {
 
     // Batch update all selected nodes with only the changed properties.
     const batch = writeBatch(db);
-    selectedNodes.forEach((id) => {
+    
+    // Filter out any selected nodes that don't exist in the current nodes array
+    const validSelectedNodes = selectedNodes.filter(id => 
+      nodes.some(node => node.id === id)
+    );
+    
+    if (validSelectedNodes.length === 0) {
+      console.warn("No valid nodes to update");
+      return;
+    }
+    
+    validSelectedNodes.forEach((id) => {
       const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
       batch.update(nodeRef, updatedProps);
     });
+    
     try {
       await batch.commit();
       // Update local state:
       setNodes((prev) =>
         prev.map((n) =>
-          selectedNodes.includes(n.id) ? { ...n, ...updatedProps } : n
+          validSelectedNodes.includes(n.id) ? { ...n, ...updatedProps } : n
         )
       );
     } catch (error) {
       console.error("Error updating nodes:", error);
+      // Clear invalid selections
+      setSelectedNodes(prev => prev.filter(id => 
+        nodes.some(node => node.id === id)
+      ));
     }
   };
 
@@ -2764,16 +2912,24 @@ const MindMapEditor = () => {
 
 
 
-  // Make sure to close context menu on click anywhere.
+  // Make sure to close context menu and color pickers on click anywhere.
   useEffect(() => {
-    const handleClick = () => {
+    const handleClick = (e) => {
       if (contextMenuu.visible) {
         closeContextMenu();
+      }
+      
+      // Close color pickers if clicking outside
+      if (showBgColorPicker && !e.target.closest('[data-color-picker="bg"]')) {
+        setShowBgColorPicker(false);
+      }
+      if (showTextColorPicker && !e.target.closest('[data-color-picker="text"]')) {
+        setShowTextColorPicker(false);
       }
     };
     document.addEventListener("click", handleClick);
     return () => document.removeEventListener("click", handleClick);
-  }, [contextMenuu.visible]);
+  }, [contextMenuu.visible, showBgColorPicker, showTextColorPicker]);
   
 
 
@@ -3696,49 +3852,91 @@ const MindMapEditor = () => {
           {activeCustomizationNode ? (
             <>
               {/* Title */}
+              <div
+                style={{
+                  marginBottom: "24px",
+                  textAlign: "center",
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                  paddingBottom: "16px",
+                }}
+              >
               <Typography
                 variant="h6"
                 style={{
-                  marginBottom: "10px",
-                  color: "#fff",
-                  fontWeight: "bold",
-                  textAlign: "center",
+                    color: "#ffffff",
+                    fontWeight: "600",
+                    fontSize: "18px",
+                    letterSpacing: "0.5px",
+                    textShadow: "0 1px 2px rgba(0, 0, 0, 0.5)",
                 }}
               >
-                Customize Menu
+                  Node Customization
               </Typography>
+                <Typography
+                  variant="caption"
+                  style={{
+                    color: "rgba(255, 255, 255, 0.6)",
+                    fontSize: "12px",
+                    display: "block",
+                    marginTop: "4px",
+                  }}
+                >
+                  {selectedNodes.length} node{selectedNodes.length !== 1 ? 's' : ''} selected
+                </Typography>
+              </div>
 
-              {/* Font Label */}
+              {/* Font Section */}
+              <div style={{ marginBottom: "20px" }}>
               <Typography
                 variant="subtitle1"
                 style={{
-                  marginBottom: "4px",
-                  color: "#ccc",
-                  fontWeight: 400,
-                  fontFamily: "Arial",
+                    marginBottom: "12px",
+                    color: "rgba(255, 255, 255, 0.9)",
+                    fontWeight: "500",
+                    fontSize: "14px",
+                    letterSpacing: "0.3px",
+                    textTransform: "uppercase",
+                    borderLeft: "3px solid rgba(255, 255, 255, 0.3)",
+                    paddingLeft: "12px",
                 }}
               >
-                Font
+                  Typography
               </Typography>
 
               {/* Font Selector */}
               <FormControl
                 variant="filled"
                 size="small"
-                sx={{ minWidth: 210 }}
-                style={{
-                  marginBottom: "10px",
-                }}
-              >
-                <InputLabel style={{ color: "#ccc" }}>Font</InputLabel>
+                  sx={{ 
+                    minWidth: "100%",
+                    marginBottom: "16px",
+                    "& .MuiFilledInput-root": {
+                      backgroundColor: "rgba(43, 43, 43, 0.8)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      borderRadius: "8px",
+                      "&:hover": {
+                        backgroundColor: "rgba(43, 43, 43, 0.9)",
+                        borderColor: "rgba(255, 255, 255, 0.2)",
+                      },
+                      "&.Mui-focused": {
+                        backgroundColor: "rgba(43, 43, 43, 1)",
+                        borderColor: "rgba(255, 255, 255, 0.3)",
+                      }
+                    },
+                    "& .MuiInputLabel-root": {
+                      color: "rgba(255, 255, 255, 0.7)",
+                      fontSize: "13px",
+                    },
+                    "& .MuiSelect-select": {
+                      color: "#fff",
+                      fontSize: "14px",
+                    }
+                  }}
+                >
+                  <InputLabel>Font Family</InputLabel>
                 <Select
                   value={tempFontFamily}
                   onChange={(e) => setTempFontFamily(e.target.value)}
-                  style={{
-                    color: "#fff",
-                    backgroundColor: "#2b2b2b",
-                    width: "100%",
-                  }}
                 >
                   <MenuItem value="cursive">Cursive</MenuItem>
                   <MenuItem value="Microsoft Yahei">Microsoft Yahei</MenuItem>
@@ -3748,16 +3946,17 @@ const MindMapEditor = () => {
                 </Select>
               </FormControl>
 
-              {/* Font Size Label */}
+                {/* Font Size */}
               <Typography
-                variant="subtitle1"
+                  variant="body2"
                 style={{
-                  marginBottom: "4px",
-                  color: "#ccc",
-                  fontWeight: 400,
+                    marginBottom: "8px",
+                    color: "rgba(255, 255, 255, 0.8)",
+                    fontSize: "13px",
+                    fontWeight: "500",
                 }}
               >
-                Font size
+                  Font Size
               </Typography>
 
               {/* Font Size Autocomplete */}
@@ -3785,41 +3984,73 @@ const MindMapEditor = () => {
                 }}
                 sx={{
                   width: "100%",
+                    marginBottom: "16px",
                   "& .MuiInputBase-root": {
                     color: "#fff",
                   },
                   "& .MuiFilledInput-root": {
-                    backgroundColor: "#2b2b2b",
+                      backgroundColor: "rgba(43, 43, 43, 0.8)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      borderRadius: "8px",
+                      "&:hover": {
+                        backgroundColor: "rgba(43, 43, 43, 0.9)",
+                        borderColor: "rgba(255, 255, 255, 0.2)",
                   },
-                  "& .MuiOutlinedInput-notchedOutline": { border: "none" },
-                  "& .MuiAutocomplete-popupIndicator": { color: "#fff" },
+                      "&.Mui-focused": {
+                        backgroundColor: "rgba(43, 43, 43, 1)",
+                        borderColor: "rgba(255, 255, 255, 0.3)",
+                      }
+                    },
+                    "& .MuiInputLabel-root": {
+                      color: "rgba(255, 255, 255, 0.7)",
+                      fontSize: "13px",
+                    },
+                    "& .MuiAutocomplete-popupIndicator": { 
+                      color: "rgba(255, 255, 255, 0.6)",
+                    },
                 }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
                     label="Font Size"
                     variant="filled"
-                    InputLabelProps={{ style: { color: "#ccc" } }}
                   />
                 )}
-                style={{
-                  marginBottom: "12px",
-                  boxShadow: "inset 0 0 4px rgba(0,0,0,0.6)",
-                  borderRadius: "6px",
-                  color: "white",
-                }}
               />
 
               {/* Text Style + Alignment Toggles */}
-              <Stack direction="column" spacing={1} sx={{ alignItems: "center" }}>
+                <div style={{ marginBottom: "16px" }}>
+                  <Typography
+                    variant="body2"
+                    style={{
+                      marginBottom: "8px",
+                      color: "rgba(255, 255, 255, 0.8)",
+                      fontSize: "13px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Text Style
+                  </Typography>
+                  <Stack direction="column" spacing={2} sx={{ alignItems: "center" }}>
                 <ToggleButtonGroup
                   color="primary"
                   value={tempTextStyle}
                   onChange={(e, newStyles) => setTempTextStyle(newStyles)}
-                  style={{
-                    backgroundColor: "#2b2b2b",
-                    marginBottom: "8px",
-                    borderRadius: "6px",
+                      sx={{
+                        backgroundColor: "rgba(43, 43, 43, 0.8)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "8px",
+                        "& .MuiToggleButton-root": {
+                          color: "rgba(255, 255, 255, 0.7)",
+                          border: "none",
+                          "&:hover": {
+                            backgroundColor: "rgba(255, 255, 255, 0.1)",
+                          },
+                          "&.Mui-selected": {
+                            backgroundColor: "rgba(255, 255, 255, 0.2)",
+                            color: "#fff",
+                          }
+                        }
                   }}
                   aria-label="text style"
                   size="small"
@@ -3844,9 +4075,21 @@ const MindMapEditor = () => {
                       setTempTextAlign(newAlign);
                     }
                   }}
-                  style={{
-                    backgroundColor: "#2b2b2b",
-                    borderRadius: "6px",
+                      sx={{
+                        backgroundColor: "rgba(43, 43, 43, 0.8)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "8px",
+                        "& .MuiToggleButton-root": {
+                          color: "rgba(255, 255, 255, 0.7)",
+                          border: "none",
+                          "&:hover": {
+                            backgroundColor: "rgba(255, 255, 255, 0.1)",
+                          },
+                          "&.Mui-selected": {
+                            backgroundColor: "rgba(255, 255, 255, 0.2)",
+                            color: "#fff",
+                          }
+                        }
                   }}
                   aria-label="text alignment"
                   size="small"
@@ -3862,88 +4105,369 @@ const MindMapEditor = () => {
                   </ToggleButton>
                 </ToggleButtonGroup>
               </Stack>
+                </div>
+              </div>
 
-              {/* Node Background Color */}
-              <Box
-                component="div"
-                sx={{
-                  //color: "#fff",
-                  fontSize: "1rem",
-                  marginTop: "12px",
-                  //marginBottom: "4px",
-                  color: "#ccc",
-                  fontWeight: 400,
-                  fontFamily: "Arial",
-                }}
+              {/* Colors Section */}
+              <div style={{ marginBottom: "20px" }}>
+                <Typography
                 variant="subtitle1"
-              >
-                Background
-                <input
-                  type="color"
-                  value={tempBgColor}
-                  onChange={(e) => setTempBgColor(e.target.value)}
                   style={{
-                    display: "block",
-                    width: "100%",
-                    height: "40px",
-                    marginTop: "5px",
-                    border: "none",
-                    backgroundColor: "transparent",
-                    padding: 0,
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                    
+                    marginBottom: "16px",
+                    color: "rgba(255, 255, 255, 0.9)",
+                    fontWeight: "500",
+                    fontSize: "14px",
+                    letterSpacing: "0.3px",
+                    textTransform: "uppercase",
+                    borderLeft: "3px solid rgba(255, 255, 255, 0.3)",
+                    paddingLeft: "12px",
                   }}
-                />
-              </Box>
-
-              {/* Node Font Color */}
-              <Box
-                component="div"
-                sx={{
-                  //color: "#fff",
-                  fontSize: "1rem",
-                  marginTop: "12px",
-                  //marginBottom: "4px",
-                  color: "#ccc",
-                  fontWeight: 400,
-                  fontFamily: "Arial",
-                }}
-                variant="subtitle1"
-              >
-                Font Color
-                <input
-                  type="color"
-                  value={tempTextColor}
-                  onChange={(e) => setTempTextColor(e.target.value)}
+                >
+                  Colors
+                </Typography>
+                <div
+                  data-color-picker="bg"
                   style={{
-                    display: "block",
-                    width: "100%",
-                    height: "40px",
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    marginTop: "5px",
-                    borderRadius: "6px",
-                    cursor: "pointer",
+                    position: "relative",
+                    marginTop: "8px",
                   }}
-                />
-              </Box>
-
-              {/* Z-Index Controls */}
-              <Box
-                component="div"
-                sx={{
-                  fontSize: "1rem",
-                  marginTop: "12px",
-                  marginBottom: "12px",
+                >
+                  <div
+                    onClick={() => setShowBgColorPicker(!showBgColorPicker)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      padding: "12px",
+                      backgroundColor: "#2b2b2b",
+                      borderRadius: "8px",
+                      border: "1px solid #444",
+                    cursor: "pointer",
+                      transition: "all 0.2s ease",
+                      "&:hover": {
+                        borderColor: "#666",
+                      }
+                    }}
+                    onMouseEnter={(e) => e.target.style.borderColor = "#666"}
+                    onMouseLeave={(e) => e.target.style.borderColor = "#444"}
+                  >
+                    <div
+                      style={{
+                        width: "40px",
+                        height: "40px",
+                        backgroundColor: tempBgColor,
+                        borderRadius: "8px",
+                        border: "2px solid #555",
+                        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.1)",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          background: `linear-gradient(45deg, 
+                            transparent 25%, 
+                            rgba(255,255,255,0.1) 25%, 
+                            rgba(255,255,255,0.1) 50%, 
+                            transparent 50%, 
+                            transparent 75%, 
+                            rgba(255,255,255,0.1) 75%)`,
+                          backgroundSize: "8px 8px",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "14px",
+                          color: "#fff",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Background
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          color: "#999",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {tempBgColor.toUpperCase()}
+                      </span>
+                    </div>
+                    <PaletteIcon style={{ color: "#666", fontSize: "20px" }} />
+                  </div>
+                  
+                  {showBgColorPicker && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        left: 0,
+                        zIndex: 1000,
+                        marginTop: "8px",
+                        borderRadius: "8px",
+                        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                        border: "1px solid #444",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <ChromePicker
+                        color={tempBgColor}
+                        onChange={(color) => setTempBgColor(color.hex)}
+                        disableAlpha={true}
+                        styles={{
+                          default: {
+                            picker: {
+                              backgroundColor: "#1e1e1e",
+                              border: "none",
+                              borderRadius: "8px",
+                              boxShadow: "none",
+                              fontFamily: "Arial, sans-serif",
+                            },
+                            saturation: {
+                              borderRadius: "4px",
+                            },
+                            hue: {
+                              borderRadius: "4px",
+                            },
+                            input: {
+                              backgroundColor: "#2b2b2b",
+                              border: "1px solid #444",
+                              borderRadius: "4px",
+                              color: "#fff",
+                              fontSize: "12px",
+                            },
+                            label: {
                   color: "#ccc",
-                  fontWeight: 400,
-                  fontFamily: "Arial",
+                              fontSize: "11px",
+                            },
+                          },
+                        }}
+                      />
+                      <div
+                        style={{
+                          padding: "8px",
+                          backgroundColor: "#1e1e1e",
+                          borderTop: "1px solid #333",
+                          display: "flex",
+                          justifyContent: "flex-end",
+                        }}
+                      >
+                        <Button
+                          size="small"
+                          onClick={() => setShowBgColorPicker(false)}
+                  style={{
+                            color: "#fff",
+                            backgroundColor: "#333",
+                            fontSize: "11px",
+                            minWidth: "auto",
+                            padding: "4px 12px",
+                          }}
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Font Color */}
+                <div
+                  data-color-picker="text"
+                  style={{
+                    position: "relative",
+                    marginTop: "8px",
+                  }}
+                >
+                  <div
+                    onClick={() => setShowTextColorPicker(!showTextColorPicker)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      padding: "12px",
+                      backgroundColor: "#2b2b2b",
+                      borderRadius: "8px",
+                      border: "1px solid #444",
+                    cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                    onMouseEnter={(e) => e.target.style.borderColor = "#666"}
+                    onMouseLeave={(e) => e.target.style.borderColor = "#444"}
+                  >
+                    <div
+                      style={{
+                        width: "40px",
+                        height: "40px",
+                        backgroundColor: tempTextColor,
+                        borderRadius: "8px",
+                        border: "2px solid #555",
+                        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.1)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "16px",
+                        fontWeight: "bold",
+                        color: tempBgColor,
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          background: `linear-gradient(45deg, 
+                            transparent 25%, 
+                            rgba(255,255,255,0.1) 25%, 
+                            rgba(255,255,255,0.1) 50%, 
+                            transparent 50%, 
+                            transparent 75%, 
+                            rgba(255,255,255,0.1) 75%)`,
+                          backgroundSize: "8px 8px",
+                        }}
+                      />
+                      <span style={{ position: "relative", zIndex: 1 }}>Aa</span>
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "14px",
+                          color: "#fff",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Font Color
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          color: "#999",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {tempTextColor.toUpperCase()}
+                      </span>
+                    </div>
+                    <PaletteIcon style={{ color: "#666", fontSize: "20px" }} />
+                  </div>
+                  
+                  {showTextColorPicker && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        left: 0,
+                        zIndex: 1000,
+                        marginTop: "8px",
+                        borderRadius: "8px",
+                        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                        border: "1px solid #444",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <ChromePicker
+                        color={tempTextColor}
+                        onChange={(color) => setTempTextColor(color.hex)}
+                        disableAlpha={true}
+                        styles={{
+                          default: {
+                            picker: {
+                              backgroundColor: "#1e1e1e",
+                              border: "none",
+                              borderRadius: "8px",
+                              boxShadow: "none",
+                              fontFamily: "Arial, sans-serif",
+                            },
+                            saturation: {
+                              borderRadius: "4px",
+                            },
+                            hue: {
+                              borderRadius: "4px",
+                            },
+                            input: {
+                              backgroundColor: "#2b2b2b",
+                              border: "1px solid #444",
+                              borderRadius: "4px",
+                              color: "#fff",
+                              fontSize: "12px",
+                            },
+                            label: {
+                  color: "#ccc",
+                              fontSize: "11px",
+                            },
+                          },
+                        }}
+                      />
+                      <div
+                        style={{
+                          padding: "8px",
+                          backgroundColor: "#1e1e1e",
+                          borderTop: "1px solid #333",
+                          display: "flex",
+                          justifyContent: "flex-end",
+                        }}
+                      >
+                        <Button
+                          size="small"
+                          onClick={() => setShowTextColorPicker(false)}
+                          style={{
+                            color: "#fff",
+                            backgroundColor: "#333",
+                            fontSize: "11px",
+                            minWidth: "auto",
+                            padding: "4px 12px",
                 }}
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Layer Controls Section */}
+              <div style={{ marginBottom: "20px" }}>
+                <Typography
                 variant="subtitle1"
+                  style={{
+                    marginBottom: "12px",
+                    color: "rgba(255, 255, 255, 0.9)",
+                    fontWeight: "500",
+                    fontSize: "14px",
+                    letterSpacing: "0.3px",
+                    textTransform: "uppercase",
+                    borderLeft: "3px solid rgba(255, 255, 255, 0.3)",
+                    paddingLeft: "12px",
+                  }}
               >
-                Layer Order (Z-Index)
+                  Layer Order
+                </Typography>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
                   <TextField
                     type="number"
@@ -3958,11 +4482,21 @@ const MindMapEditor = () => {
                       flex: 1,
                       "& .MuiInputBase-root": {
                         color: "#fff",
-                        backgroundColor: "#2b2b2b",
+                        backgroundColor: "rgba(43, 43, 43, 0.8)",
+                        border: "1px solid rgba(255, 255, 255, 0.1)",
+                        borderRadius: "8px",
                       },
                       "& .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#555",
+                        border: "none",
                       },
+                      "& .MuiInputBase-root:hover": {
+                        backgroundColor: "rgba(43, 43, 43, 0.9)",
+                        borderColor: "rgba(255, 255, 255, 0.2)",
+                      },
+                      "& .MuiInputBase-root.Mui-focused": {
+                        backgroundColor: "rgba(43, 43, 43, 1)",
+                        borderColor: "rgba(255, 255, 255, 0.3)",
+                      }
                     }}
                     inputProps={{ min: 0, max: 9999 }}
                   />
@@ -3970,55 +4504,104 @@ const MindMapEditor = () => {
                     variant="contained"
                     size="small"
                     onClick={handleBringToFront}
-                    style={{
-                      backgroundColor: "#333",
-                      color: "#ccc",
+                    sx={{
+                      backgroundColor: "rgba(43, 43, 43, 0.8)",
+                      color: "rgba(255, 255, 255, 0.8)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      borderRadius: "8px",
                       minWidth: "auto",
-                      padding: "4px 8px",
-                      fontSize: "14px",
-                      border: "1px solid #555",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      fontWeight: "500",
+                      "&:hover": {
+                        backgroundColor: "rgba(43, 43, 43, 0.9)",
+                        borderColor: "rgba(255, 255, 255, 0.2)",
+                      }
                     }}
                     title="Bring to Front"
                   >
-                    +
+                    Front
                   </Button>
                   <Button
                     variant="contained"
                     size="small"
                     onClick={handleSendToBack}
-                    style={{
-                      backgroundColor: "#333",
-                      color: "#ccc",
+                    sx={{
+                      backgroundColor: "rgba(43, 43, 43, 0.8)",
+                      color: "rgba(255, 255, 255, 0.8)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      borderRadius: "8px",
                       minWidth: "auto",
-                      padding: "4px 8px",
-                      fontSize: "14px",
-                      border: "1px solid #555",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      fontWeight: "500",
+                      "&:hover": {
+                        backgroundColor: "rgba(43, 43, 43, 0.9)",
+                        borderColor: "rgba(255, 255, 255, 0.2)",
+                      }
                     }}
                     title="Send to Back"
                   >
-                    -
+                    Back
                   </Button>
                 </div>
-              </Box>
+              </div>
 
-              {/* Remove All Links Button */}
+              {/* Actions Section */}
+              <div style={{ marginTop: "24px", paddingTop: "20px", borderTop: "1px solid rgba(255, 255, 255, 0.1)" }}>
               <Button
                 variant="contained"
                 onClick={handleRemoveLinks}
-                style={{
-                  marginTop: "30px",
-                  backgroundColor: "#a11",
-                  color: "#fff",
+                  sx={{
                   width: "100%",
+                    backgroundColor: "rgba(170, 17, 17, 0.8)",
+                    color: "#fff",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    borderRadius: "8px",
+                    padding: "12px",
+                    fontSize: "13px",
+                    fontWeight: "500",
+                    textTransform: "none",
+                    "&:hover": {
+                      backgroundColor: "rgba(170, 17, 17, 0.9)",
+                      borderColor: "rgba(255, 255, 255, 0.2)",
+                    }
                 }}
               >
                 Remove All Links
               </Button>
+              </div>
             </>
           ) : (
-            <Typography variant="body2" style={{ color: "#fff" }}>
-              Select a node to customize...
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 20px",
+                color: "rgba(255, 255, 255, 0.6)",
+              }}
+            >
+              <Typography
+                variant="h6"
+                style={{
+                  color: "rgba(255, 255, 255, 0.8)",
+                  marginBottom: "8px",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                }}
+              >
+                No Selection
             </Typography>
+              <Typography
+                variant="body2"
+                style={{
+                  color: "rgba(255, 255, 255, 0.5)",
+                  fontSize: "13px",
+                  lineHeight: "1.5",
+                }}
+              >
+                Select one or more nodes to customize their appearance and properties
+              </Typography>
+            </div>
           )}
         </div>
       )}
@@ -4041,7 +4624,7 @@ const MindMapEditor = () => {
         }}
       >
         <Typography variant="subtitle2" style={{ fontWeight: 'bold', marginBottom: '8px', color: '#4CAF50' }}>
-          👥 Active Users ({presenceUsers.length})
+          Active Users ({presenceUsers.length})
         </Typography>
         {presenceUsers.length === 0 ? (
           <Typography variant="caption" style={{ color: '#999', fontStyle: 'italic' }}>
@@ -4089,7 +4672,7 @@ const MindMapEditor = () => {
         {/* Connection Status */}
         <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #333' }}>
           <Typography variant="caption" style={{ color: '#999', fontSize: '10px' }}>
-            🟢 Connected • Real-time sync active
+            Connected • Real-time sync active
           </Typography>
         </div>
       </div>
@@ -4255,7 +4838,12 @@ const MindMapEditor = () => {
                   )
                 );
                 const batch = writeBatch(db);
-                selectedNodes.forEach((id) => {
+                // Filter out any selected nodes that don't exist in the current nodes array
+                const validSelectedNodes = selectedNodes.filter(id => 
+                  nodes.some(node => node.id === id)
+                );
+                
+                validSelectedNodes.forEach((id) => {
                   if (newPositions[id]) {
                     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
                     batch.update(nodeRef, {
@@ -4268,6 +4856,10 @@ const MindMapEditor = () => {
                   await batch.commit();
                 } catch (error) {
                   console.error("Error updating nodes in batch:", error);
+                  // Clear invalid selections
+                  setSelectedNodes(prev => prev.filter(id => 
+                    nodes.some(node => node.id === id)
+                  ));
                 }
                 multiDragStartRef.current = {};
                 setGroupDelta({ x: 0, y: 0 });
@@ -4276,10 +4868,18 @@ const MindMapEditor = () => {
                   prev.map((n) => (n.id === node.id ? { ...n, x: finalX, y: finalY } : n))
                 );
                 try {
+                  // Check if node still exists before updating
+                  const nodeExists = nodes.some(n => n.id === node.id);
+                  if (nodeExists) {
                   const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
                   await updateDoc(nodeRef, { x: finalX, y: finalY });
+                  }
                 } catch (error) {
                   console.error("Error updating node position:", error);
+                  // Clear invalid selections
+                  setSelectedNodes(prev => prev.filter(id => 
+                    nodes.some(n => n.id === id)
+                  ));
                 }
               }
               setIsDragging(false);
@@ -4321,6 +4921,14 @@ const MindMapEditor = () => {
         mergeMindMapData={mergeMindMapDataHandler}
         isChatOpen={isChatOpen}
         setIsChatOpen={setIsChatOpen}
+        selectedNodes={selectedNodes}
+        nodes={nodes}
+        setNodes={setNodes}
+        mindMapId={mindMapId}
+        updateNodeText={updateNodeTextBatch}
+        addNode={addNodeBatch}
+        addLink={addLinkBatch}
+        pushToUndoStack={pushSelectionToUndoStack}
       />
       <LoadingOverlay />
       <ErrorComponent />
