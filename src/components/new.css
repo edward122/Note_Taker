@@ -50,12 +50,13 @@ html, body {
 .context-menu-item {
   padding: 4px 8px;
   cursor: pointer;
-  transition: background-color 0.2s ease;
   border-radius: 4px;
+  /* Removed transition to prevent flickering */
 }
 
 .context-menu-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
+  /* Instant hover effect, no transition */
 }
 
 /* Button hover effects */
@@ -91,3 +92,87 @@ button:hover {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.5);
 }
+
+/* Enhanced resize handle styling */
+.resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: #8896DD;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: all 0.15s ease;
+  z-index: 1000;
+}
+
+.resize-handle:hover {
+  background-color: #6B7CE8;
+  transform: scale(1.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.resize-handle:active {
+  background-color: #5A6BE8;
+  transform: scale(1.1);
+}
+
+/* Unified bounding box handles - larger and more prominent */
+.resize-handle.unified {
+  width: 14px;
+  height: 14px;
+  background-color: #8896DD;
+  border: 3px solid #fff;
+  border-radius: 4px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+  transition: none !important; /* Force no transition to prevent blinking */
+}
+
+.resize-handle.unified:hover {
+  background-color: #6B7CE8 !important;
+  transform: scale(1.3) !important;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5) !important;
+  transition: none !important; /* Force no transition */
+}
+
+.resize-handle.unified:active {
+  background-color: #5A6BE8 !important;
+  transform: scale(1.15) !important;
+  transition: none !important; /* Force no transition */
+}
+
+/* Position handles for unified system */
+.resize-handle.unified.nw { top: -7px; left: -7px; cursor: nw-resize; }
+.resize-handle.unified.ne { top: -7px; right: -7px; cursor: ne-resize; }
+.resize-handle.unified.sw { bottom: -7px; left: -7px; cursor: sw-resize; }
+.resize-handle.unified.se { bottom: -7px; right: -7px; cursor: se-resize; }
+
+/* Side handles for unified system */
+.resize-handle.unified.n { top: -7px; left: 50%; transform: translateX(-50%); cursor: n-resize; transition: none !important; }
+.resize-handle.unified.s { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: s-resize; transition: none !important; }
+.resize-handle.unified.w { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; transition: none !important; }
+.resize-handle.unified.e { top: 50%; right: -7px; transform: translateY(-50%); cursor: e-resize; transition: none !important; }
+
+/* Hover effects for side handles */
+.resize-handle.unified.n:hover, .resize-handle.unified.s:hover { 
+  transform: translateX(-50%) scale(1.3) !important; 
+  transition: none !important;
+}
+.resize-handle.unified.w:hover, .resize-handle.unified.e:hover { 
+  transform: translateY(-50%) scale(1.3) !important; 
+  transition: none !important;
+}
+
+/* Specific positioning for each handle */
+.resize-handle.nw { top: -4px; left: -4px; cursor: nw-resize; }
+.resize-handle.ne { top: -4px; right: -4px; cursor: ne-resize; }
+.resize-handle.sw { bottom: -4px; left: -4px; cursor: sw-resize; }
+.resize-handle.se { bottom: -4px; right: -4px; cursor: se-resize; }
+.resize-handle.n { top: -4px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+.resize-handle.s { bottom: -4px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+.resize-handle.w { top: 50%; left: -4px; transform: translateY(-50%); cursor: w-resize; }
+.resize-handle.e { top: 50%; right: -4px; transform: translateY(-50%); cursor: e-resize; }
+
+/* Hover effects for middle handles */
+.resize-handle.n:hover, .resize-handle.s:hover { transform: translateX(-50%) scale(1.2); }
+.resize-handle.w:hover, .resize-handle.e:hover { transform: translateY(-50%) scale(1.2); }

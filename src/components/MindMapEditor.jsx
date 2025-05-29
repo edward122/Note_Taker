@@ -1,6 +1,6 @@
 // src/components/MindMapEditor.jsx
 // Global CSS: html, body { overflow: hidden; height: 100%; margin: 0; padding: 0; }
-import React, { useEffect, useState, useRef, useMemo, useCallback  } from "react";
+import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from "react";
 import throttle from "lodash.throttle";
 
 //import Node from "/.Node.jsx";
@@ -79,13 +79,929 @@ const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 // Add at the top, after imports
 const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Mobi|Android/i.test(navigator.userAgent));
 
+// ===== OPTIMIZED STATE MANAGEMENT SYSTEM =====
+
+/**
+ * Immutable state updater with structural sharing
+ * Only creates new objects for changed nodes, keeps unchanged nodes as-is
+ */
+class NodeStateManager {
+  constructor() {
+    this.nodeMap = new Map(); // Fast O(1) lookups
+    this.changeQueue = new Map(); // Batch pending changes
+    this.batchTimeout = null;
+    this.subscribers = new Set();
+  }
+
+  // Set initial nodes with Map-based indexing
+  setNodes(nodes) {
+    this.nodeMap.clear();
+    nodes.forEach(node => {
+      this.nodeMap.set(node.id, node);
+    });
+    this.notifySubscribers();
+  }
+
+  // Get all nodes as array (cached and memoized)
+  getNodes() {
+    return Array.from(this.nodeMap.values());
+  }
+
+  // Get node by ID with O(1) lookup
+  getNode(id) {
+    return this.nodeMap.get(id);
+  }
+
+  // Optimized single node update - only change what's different
+  updateNode(id, updates, immediate = false) {
+    const currentNode = this.nodeMap.get(id);
+    if (!currentNode) return false;
+
+    // Check if any properties actually changed
+    const hasChanges = Object.keys(updates).some(key => 
+      currentNode[key] !== updates[key]
+    );
+    
+    if (!hasChanges) return false; // No actual changes, skip update
+
+    if (immediate) {
+      // Immediate update for critical operations
+      const updatedNode = { ...currentNode, ...updates };
+      this.nodeMap.set(id, updatedNode);
+      this.notifySubscribers();
+      return true;
+    } else {
+      // Batch update for performance
+      this.queueChange(id, updates);
+      return true;
+    }
+  }
+
+  // Batch multiple node updates for optimal performance
+  updateNodes(nodeUpdates, immediate = false) {
+    let hasAnyChanges = false;
+
+    for (const [id, updates] of Object.entries(nodeUpdates)) {
+      const currentNode = this.nodeMap.get(id);
+      if (!currentNode) continue;
+
+      // Check if any properties actually changed
+      const hasChanges = Object.keys(updates).some(key => 
+        currentNode[key] !== updates[key]
+      );
+      
+      if (!hasChanges) continue;
+
+      if (immediate) {
+        const updatedNode = { ...currentNode, ...updates };
+        this.nodeMap.set(id, updatedNode);
+        hasAnyChanges = true;
+      } else {
+        this.queueChange(id, updates);
+        hasAnyChanges = true;
+      }
+    }
+
+    if (immediate && hasAnyChanges) {
+      this.notifySubscribers();
+    }
+
+    return hasAnyChanges;
+  }
+
+  // Queue changes for batched processing
+  queueChange(id, updates) {
+    const existing = this.changeQueue.get(id) || {};
+    this.changeQueue.set(id, { ...existing, ...updates });
+
+    // Debounced batch processing
+    if (this.batchTimeout) {
+      clearTimeout(this.batchTimeout);
+    }
+    
+    this.batchTimeout = setTimeout(() => {
+      this.processBatchedChanges();
+    }, 16); // ~60fps batching
+  }
+
+  // Process all batched changes at once
+  processBatchedChanges() {
+    if (this.changeQueue.size === 0) return;
+
+    let hasChanges = false;
+    for (const [id, updates] of this.changeQueue) {
+      const currentNode = this.nodeMap.get(id);
+      if (currentNode) {
+        const updatedNode = { ...currentNode, ...updates };
+        this.nodeMap.set(id, updatedNode);
+        hasChanges = true;
+      }
+    }
+
+    this.changeQueue.clear();
+    this.batchTimeout = null;
+
+    if (hasChanges) {
+      this.notifySubscribers();
+    }
+  }
+
+  // Add or remove nodes
+  addNode(node) {
+    this.nodeMap.set(node.id, node);
+    this.notifySubscribers();
+  }
+
+  removeNode(id) {
+    const existed = this.nodeMap.delete(id);
+    if (existed) {
+      this.notifySubscribers();
+    }
+    return existed;
+  }
+
+  // Subscribe to state changes
+  subscribe(callback) {
+    this.subscribers.add(callback);
+    return () => this.subscribers.delete(callback);
+  }
+
+  // Notify all subscribers of state changes
+  notifySubscribers() {
+    const nodes = this.getNodes();
+    this.subscribers.forEach(callback => callback(nodes));
+  }
+
+  // Force immediate processing of any pending changes
+  flush() {
+    if (this.batchTimeout) {
+      clearTimeout(this.batchTimeout);
+      this.processBatchedChanges();
+    }
+  }
+
+  // Get multiple nodes efficiently
+  getNodesByIds(ids) {
+    return ids.map(id => this.nodeMap.get(id)).filter(Boolean);
+  }
+
+  // Check if node exists
+  hasNode(id) {
+    return this.nodeMap.has(id);
+  }
+
+  // Get node count
+  size() {
+    return this.nodeMap.size;
+  }
+}
+
+/**
+ * Hook for optimized node state management
+ */
+const useOptimizedNodes = (initialNodes = []) => {
+  const stateManagerRef = useRef(null);
+  const [nodes, setNodesState] = useState(initialNodes);
+  const [, forceUpdate] = useState({});
+
+  // Initialize state manager
+  if (!stateManagerRef.current) {
+    stateManagerRef.current = new NodeStateManager();
+    stateManagerRef.current.setNodes(initialNodes);
+  }
+
+  // Subscribe to state changes
+  useEffect(() => {
+    const unsubscribe = stateManagerRef.current.subscribe((newNodes) => {
+      setNodesState(newNodes);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Update nodes when external changes occur
+  useEffect(() => {
+    stateManagerRef.current.setNodes(initialNodes);
+  }, [initialNodes]);
+
+  // Optimized update functions
+  const updateNode = useCallback((id, updates, immediate = false) => {
+    return stateManagerRef.current.updateNode(id, updates, immediate);
+  }, []);
+
+  const updateNodes = useCallback((nodeUpdates, immediate = false) => {
+    return stateManagerRef.current.updateNodes(nodeUpdates, immediate);
+  }, []);
+
+  const addNode = useCallback((node) => {
+    stateManagerRef.current.addNode(node);
+  }, []);
+
+  const removeNode = useCallback((id) => {
+    return stateManagerRef.current.removeNode(id);
+  }, []);
+
+  const getNode = useCallback((id) => {
+    return stateManagerRef.current.getNode(id);
+  }, []);
+
+  const getNodesByIds = useCallback((ids) => {
+    return stateManagerRef.current.getNodesByIds(ids);
+  }, []);
+
+  const flush = useCallback(() => {
+    stateManagerRef.current.flush();
+  }, []);
+
+  return {
+    nodes,
+    updateNode,
+    updateNodes,
+    addNode,
+    removeNode,
+    getNode,
+    getNodesByIds,
+    flush,
+    stateManager: stateManagerRef.current
+  };
+};
+
+/**
+ * Memoized node selector to prevent unnecessary re-renders
+ */
+const useNodeSelector = (nodes, selector, deps = []) => {
+  return useMemo(() => selector(nodes), [nodes, ...deps]);
+};
+
+/**
+ * Optimized visible nodes calculation with memoization
+ */
+const useVisibleNodes = (nodes, pan, zoom, containerRef) => {
+  return useMemo(() => {
+    if (!containerRef.current || nodes.length === 0) return nodes;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const buffer = Math.max(50, 200 / zoom);
+    
+    const visibleLeft = -pan.x / zoom - buffer;
+    const visibleTop = -pan.y / zoom - buffer;
+    const visibleWidth = rect.width / zoom + buffer * 2;
+    const visibleHeight = rect.height / zoom + buffer * 2;
+
+    return nodes.filter((node) => {
+      const width = node.width || DEFAULT_WIDTH;
+      const height = node.height || DEFAULT_HEIGHT;
+      return (
+        node.x + width >= visibleLeft &&
+        node.x <= visibleLeft + visibleWidth &&
+        node.y + height >= visibleTop &&
+        node.y <= visibleTop + visibleHeight
+      );
+    });
+  }, [nodes, Math.round(pan.x / 50) * 50, Math.round(pan.y / 50) * 50, Math.round(zoom * 20) / 20, containerRef]);
+};
+
+// ===== END OPTIMIZED STATE MANAGEMENT SYSTEM =====
+
+/**
+ * Optimized Links State Manager
+ * Handles links with the same optimizations as nodes
+ */
+class LinksStateManager {
+  constructor() {
+    this.linkMap = new Map(); // Fast O(1) lookups by link ID
+    this.sourceMap = new Map(); // Map from source node ID to Set of link IDs
+    this.targetMap = new Map(); // Map from target node ID to Set of link IDs
+    this.changeQueue = new Map(); // Batch pending changes
+    this.batchTimeout = null;
+    this.subscribers = new Set();
+  }
+
+  // Set initial links with Map-based indexing
+  setLinks(links) {
+    this.linkMap.clear();
+    this.sourceMap.clear();
+    this.targetMap.clear();
+    
+    links.forEach(link => {
+      this.linkMap.set(link.id, link);
+      
+      // Index by source
+      if (!this.sourceMap.has(link.source)) {
+        this.sourceMap.set(link.source, new Set());
+      }
+      this.sourceMap.get(link.source).add(link.id);
+      
+      // Index by target
+      if (!this.targetMap.has(link.target)) {
+        this.targetMap.set(link.target, new Set());
+      }
+      this.targetMap.get(link.target).add(link.id);
+    });
+    
+    this.notifySubscribers();
+  }
+
+  // Get all links as array
+  getLinks() {
+    return Array.from(this.linkMap.values());
+  }
+
+  // Get link by ID with O(1) lookup
+  getLink(id) {
+    return this.linkMap.get(id);
+  }
+
+  // Get links by source node ID - O(1) lookup
+  getLinksBySource(nodeId) {
+    const linkIds = this.sourceMap.get(nodeId);
+    if (!linkIds) return [];
+    return Array.from(linkIds).map(id => this.linkMap.get(id)).filter(Boolean);
+  }
+
+  // Get links by target node ID - O(1) lookup
+  getLinksByTarget(nodeId) {
+    const linkIds = this.targetMap.get(nodeId);
+    if (!linkIds) return [];
+    return Array.from(linkIds).map(id => this.linkMap.get(id)).filter(Boolean);
+  }
+
+  // Get all links connected to a node (both source and target)
+  getLinksByNode(nodeId) {
+    const sourceLinks = this.getLinksBySource(nodeId);
+    const targetLinks = this.getLinksByTarget(nodeId);
+    const allLinks = [...sourceLinks, ...targetLinks];
+    // Remove duplicates if any
+    return allLinks.filter((link, index, self) => 
+      index === self.findIndex(l => l.id === link.id)
+    );
+  }
+
+  // Optimized single link update
+  updateLink(id, updates, immediate = false) {
+    const currentLink = this.linkMap.get(id);
+    if (!currentLink) return false;
+
+    // Check if any properties actually changed
+    const hasChanges = Object.keys(updates).some(key => 
+      currentLink[key] !== updates[key]
+    );
+    
+    if (!hasChanges) return false;
+
+    if (immediate) {
+      const updatedLink = { ...currentLink, ...updates };
+      this._updateLinkInMaps(currentLink, updatedLink);
+      this.notifySubscribers();
+      return true;
+    } else {
+      this.queueChange(id, updates);
+      return true;
+    }
+  }
+
+  // Internal method to update link in all maps when source/target changes
+  _updateLinkInMaps(oldLink, newLink) {
+    // Remove from old indices if source/target changed
+    if (oldLink.source !== newLink.source) {
+      const oldSourceSet = this.sourceMap.get(oldLink.source);
+      if (oldSourceSet) {
+        oldSourceSet.delete(oldLink.id);
+        if (oldSourceSet.size === 0) {
+          this.sourceMap.delete(oldLink.source);
+        }
+      }
+      
+      // Add to new source index
+      if (!this.sourceMap.has(newLink.source)) {
+        this.sourceMap.set(newLink.source, new Set());
+      }
+      this.sourceMap.get(newLink.source).add(newLink.id);
+    }
+
+    if (oldLink.target !== newLink.target) {
+      const oldTargetSet = this.targetMap.get(oldLink.target);
+      if (oldTargetSet) {
+        oldTargetSet.delete(oldLink.id);
+        if (oldTargetSet.size === 0) {
+          this.targetMap.delete(oldLink.target);
+        }
+      }
+      
+      // Add to new target index
+      if (!this.targetMap.has(newLink.target)) {
+        this.targetMap.set(newLink.target, new Set());
+      }
+      this.targetMap.get(newLink.target).add(newLink.id);
+    }
+
+    // Update main link map
+    this.linkMap.set(newLink.id, newLink);
+  }
+
+  // Queue changes for batched processing
+  queueChange(id, updates) {
+    const existing = this.changeQueue.get(id) || {};
+    this.changeQueue.set(id, { ...existing, ...updates });
+
+    if (this.batchTimeout) {
+      clearTimeout(this.batchTimeout);
+    }
+    
+    this.batchTimeout = setTimeout(() => {
+      this.processBatchedChanges();
+    }, 16); // ~60fps batching
+  }
+
+  // Process all batched changes at once
+  processBatchedChanges() {
+    if (this.changeQueue.size === 0) return;
+
+    let hasChanges = false;
+    for (const [id, updates] of this.changeQueue) {
+      const currentLink = this.linkMap.get(id);
+      if (currentLink) {
+        const updatedLink = { ...currentLink, ...updates };
+        this._updateLinkInMaps(currentLink, updatedLink);
+        hasChanges = true;
+      }
+    }
+
+    this.changeQueue.clear();
+    this.batchTimeout = null;
+
+    if (hasChanges) {
+      this.notifySubscribers();
+    }
+  }
+
+  // Add a new link
+  addLink(link) {
+    this.linkMap.set(link.id, link);
+    
+    // Add to source index
+    if (!this.sourceMap.has(link.source)) {
+      this.sourceMap.set(link.source, new Set());
+    }
+    this.sourceMap.get(link.source).add(link.id);
+    
+    // Add to target index
+    if (!this.targetMap.has(link.target)) {
+      this.targetMap.set(link.target, new Set());
+    }
+    this.targetMap.get(link.target).add(link.id);
+    
+    this.notifySubscribers();
+  }
+
+  // Remove a link
+  removeLink(id) {
+    const link = this.linkMap.get(id);
+    if (!link) return false;
+
+    // Remove from all indices
+    this.linkMap.delete(id);
+    
+    const sourceSet = this.sourceMap.get(link.source);
+    if (sourceSet) {
+      sourceSet.delete(id);
+      if (sourceSet.size === 0) {
+        this.sourceMap.delete(link.source);
+      }
+    }
+    
+    const targetSet = this.targetMap.get(link.target);
+    if (targetSet) {
+      targetSet.delete(id);
+      if (targetSet.size === 0) {
+        this.targetMap.delete(link.target);
+      }
+    }
+    
+    this.notifySubscribers();
+    return true;
+  }
+
+  // Subscribe to state changes
+  subscribe(callback) {
+    this.subscribers.add(callback);
+    return () => this.subscribers.delete(callback);
+  }
+
+  // Notify all subscribers
+  notifySubscribers() {
+    const links = this.getLinks();
+    this.subscribers.forEach(callback => callback(links));
+  }
+
+  // Force immediate processing
+  flush() {
+    if (this.batchTimeout) {
+      clearTimeout(this.batchTimeout);
+      this.processBatchedChanges();
+    }
+  }
+
+  // Get links count
+  size() {
+    return this.linkMap.size;
+  }
+
+  // Check if link exists
+  hasLink(id) {
+    return this.linkMap.has(id);
+  }
+
+  // Remove all links connected to a node (useful when deleting nodes)
+  removeLinksForNode(nodeId) {
+    const connectedLinks = this.getLinksByNode(nodeId);
+    connectedLinks.forEach(link => this.removeLink(link.id));
+  }
+}
+
+/**
+ * Hook for optimized links state management
+ */
+const useOptimizedLinks = (initialLinks = []) => {
+  const stateManagerRef = useRef(null);
+  const [links, setLinksState] = useState(initialLinks);
+
+  // Initialize state manager
+  if (!stateManagerRef.current) {
+    stateManagerRef.current = new LinksStateManager();
+    stateManagerRef.current.setLinks(initialLinks);
+  }
+
+  // Subscribe to state changes
+  useEffect(() => {
+    const unsubscribe = stateManagerRef.current.subscribe((newLinks) => {
+      setLinksState(newLinks);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Update links when external changes occur
+  useEffect(() => {
+    stateManagerRef.current.setLinks(initialLinks);
+  }, [initialLinks]);
+
+  // Optimized update functions
+  const updateLink = useCallback((id, updates, immediate = false) => {
+    return stateManagerRef.current.updateLink(id, updates, immediate);
+  }, []);
+
+  const addLink = useCallback((link) => {
+    stateManagerRef.current.addLink(link);
+  }, []);
+
+  const removeLink = useCallback((id) => {
+    return stateManagerRef.current.removeLink(id);
+  }, []);
+
+  const getLink = useCallback((id) => {
+    return stateManagerRef.current.getLink(id);
+  }, []);
+
+  const getLinksBySource = useCallback((nodeId) => {
+    return stateManagerRef.current.getLinksBySource(nodeId);
+  }, []);
+
+  const getLinksByTarget = useCallback((nodeId) => {
+    return stateManagerRef.current.getLinksByTarget(nodeId);
+  }, []);
+
+  const getLinksByNode = useCallback((nodeId) => {
+    return stateManagerRef.current.getLinksByNode(nodeId);
+  }, []);
+
+  const removeLinksForNode = useCallback((nodeId) => {
+    return stateManagerRef.current.removeLinksForNode(nodeId);
+  }, []);
+
+  const flush = useCallback(() => {
+    stateManagerRef.current.flush();
+  }, []);
+
+  return {
+    links,
+    updateLink,
+    addLink,
+    removeLink,
+    getLink,
+    getLinksBySource,
+    getLinksByTarget,
+    getLinksByNode,
+    removeLinksForNode,
+    flush,
+    stateManager: stateManagerRef.current
+  };
+};
+
+/**
+ * Optimized visible links calculation with memoization
+ */
+const useVisibleLinks = (links, visibleNodeIds) => {
+  return useMemo(() => {
+    if (!visibleNodeIds || visibleNodeIds.size === 0) return [];
+    
+    return links.filter(link => 
+      visibleNodeIds.has(link.source) || visibleNodeIds.has(link.target)
+    );
+  }, [links, visibleNodeIds]);
+};
+
+// ===== END OPTIMIZED STATE MANAGEMENT SYSTEM =====
+
+// Virtual Node Renderer Component with Node Pooling
+const VirtualNodeRenderer = memo(({
+  nodes,
+  zoom,
+  pan,
+  outerRef,
+  visibleNodes,
+  selectedNodes,
+  groupDelta,
+  editingNodeId,
+  editedText,
+  hoveredNodeId,
+  linkingSource,
+  currentUserEmail,
+  isNodeHighlighted,
+  handleResizeMouseDown,
+  handleNodeClick,
+  handleDoubleClick,
+  handleTyping,
+  handleTextBlur,
+  setEditedText,
+  setHoveredNodeId,
+  dragStartRef,
+  multiDragStartRef,
+  setIsDragging,
+  setNodes,
+  setGroupDelta,
+  mindMapId,
+  pushSingleNodeToUndoStack,
+  pushSelectionToUndoStack,
+  setSelectedNodes,
+  updateGroupDelta,
+  panRef,
+  zoomRef
+}) => {
+  const poolRef = useRef([]); // Component pool for reuse
+  const renderedNodesRef = useRef(new Map()); // Track rendered nodes
+  
+  // Enhanced viewport culling - only render nodes truly visible in viewport
+  const getViewportBounds = useCallback(() => {
+    if (!outerRef.current) return null;
+    
+    const rect = outerRef.current.getBoundingClientRect();
+    const currentZoom = zoomRef.current;
+    const currentPan = panRef.current;
+    const buffer = Math.max(100, 300 / currentZoom); // Larger buffer for smooth scrolling
+    
+    return {
+      left: (-currentPan.x / currentZoom) - buffer,
+      top: (-currentPan.y / currentZoom) - buffer,
+      right: (-currentPan.x + rect.width) / currentZoom + buffer,
+      bottom: (-currentPan.y + rect.height) / currentZoom + buffer
+    };
+  }, [outerRef, panRef, zoomRef]);
+  
+  // Optimized visible nodes calculation with spatial awareness
+  const virtualVisibleNodes = useMemo(() => {
+    if (!outerRef.current) return visibleNodes;
+    
+    const rect = outerRef.current.getBoundingClientRect();
+    const currentZoom = zoom; // Use state values for reactivity
+    const currentPan = pan;   // Use state values for reactivity
+    const buffer = Math.max(100, 300 / currentZoom);
+    
+    const viewport = {
+      left: (-currentPan.x / currentZoom) - buffer,
+      top: (-currentPan.y / currentZoom) - buffer,
+      right: (-currentPan.x + rect.width) / currentZoom + buffer,
+      bottom: (-currentPan.y + rect.height) / currentZoom + buffer
+    };
+    
+    return visibleNodes.filter(node => {
+      const nodeRight = node.x + (node.width || DEFAULT_WIDTH);
+      const nodeBottom = node.y + (node.height || DEFAULT_HEIGHT);
+      
+      return !(
+        node.x > viewport.right ||
+        nodeRight < viewport.left ||
+        node.y > viewport.bottom ||
+        nodeBottom < viewport.top
+      );
+    });
+  }, [visibleNodes, zoom, pan, outerRef]);
+  
+  // Node component factory with pooling
+  const createNodeComponent = useCallback((node, index) => {
+    return (
+      <MindMapNode
+        key={`virtual-${node.id}-${index}`}
+        node={node}
+        zoom={zoomRef.current}
+        groupDelta={groupDelta}
+        isHighlighted={isNodeHighlighted(node)}
+        currentUserEmail={currentUserEmail}
+        selectedNodes={selectedNodes}
+        editingNodeId={editingNodeId}
+        editedText={editedText}
+        handleResizeMouseDown={isMobile ? () => {} : handleResizeMouseDown}
+        handleNodeClick={isMobile ? () => {} : handleNodeClick}
+        handleDoubleClick={isMobile ? () => {} : handleDoubleClick}
+        handleTyping={isMobile ? () => {} : handleTyping}
+        handleTextBlur={isMobile ? () => {} : handleTextBlur}
+        setEditedText={isMobile ? () => {} : setEditedText}
+        setHoveredNodeId={isMobile ? () => {} : setHoveredNodeId}
+        linkingSource={linkingSource}
+        hoveredNodeId={hoveredNodeId}
+        onStart={isMobile ? () => false : (e, data) => {
+          if (editingNodeId === node.id) return false;
+          setIsDragging(true);
+          const rect = outerRef.current.getBoundingClientRect();
+          const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
+          const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
+          const offsetX = cursorWorldX - node.x;
+          const offsetY = cursorWorldY - node.y;
+          dragStartRef.current = {
+            offsetX,
+            offsetY,
+            initialX: node.x,
+            initialY: node.y
+          };
+          if (selectedNodes.length < 1 || selectedNodes.length < 2) {
+            pushSingleNodeToUndoStack(node);
+          }
+          if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
+            if (Object.keys(multiDragStartRef.current).length === 0) {
+              selectedNodes.forEach((id) => {
+                const found = nodes.find((n) => n.id === id);
+                if (found) {
+                  multiDragStartRef.current[id] = { x: found.x, y: found.y };
+                }
+              });
+            }
+          }
+        }}
+        onDrag={isMobile ? () => {} : (e, data) => {
+          const rect = outerRef.current.getBoundingClientRect();
+          const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
+          const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
+          const newX = cursorWorldX - dragStartRef.current.offsetX;
+          const newY = cursorWorldY - dragStartRef.current.offsetY;
+          if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
+            updateGroupDelta({
+              x: newX - dragStartRef.current.initialX,
+              y: newY - dragStartRef.current.initialY
+            });
+          } else {
+            setNodes((prev) =>
+              prev.map((n) => (n.id === node.id ? { ...n, x: newX, y: newY } : n))
+            );
+          }
+        }}
+        onStop={isMobile ? () => {} : async (e, data) => {
+          const rect = outerRef.current.getBoundingClientRect();
+          const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
+          const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
+          const finalX = cursorWorldX - dragStartRef.current.offsetX;
+          const finalY = cursorWorldY - dragStartRef.current.offsetY;
+          const distance = Math.sqrt(
+            Math.pow(finalX - dragStartRef.current.initialX, 2) +
+              Math.pow(finalY - dragStartRef.current.initialY, 2)
+          );
+          const threshold = 0.01;
+          if (distance < threshold) {
+            setIsDragging(false);
+            return;
+          }
+          if (selectedNodes.length > 1) {
+            pushSelectionToUndoStack();
+            const deltaX = finalX - dragStartRef.current.initialX;
+            const deltaY = finalY - dragStartRef.current.initialY;
+            const newPositions = {};
+            selectedNodes.forEach((id) => {
+              const startPos = multiDragStartRef.current[id];
+              if (startPos) {
+                newPositions[id] = {
+                  x: startPos.x + deltaX,
+                  y: startPos.y + deltaY
+                };
+              }
+            });
+            setNodes((prev) =>
+              prev.map((n) =>
+                selectedNodes.includes(n.id) && newPositions[n.id] && n.id !== node.id
+                  ? { ...n, x: newPositions[n.id].x, y: newPositions[n.id].y }
+                  : n
+              )
+            );
+            const batch = writeBatch(db);
+            // Filter out any selected nodes that don't exist in the current nodes array
+            const validSelectedNodes = selectedNodes.filter(id => 
+              nodes.some(nodeCheck => nodeCheck.id === id)
+            );
+            
+            validSelectedNodes.forEach((id) => {
+              if (newPositions[id]) {
+                const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+                batch.update(nodeRef, {
+                  x: newPositions[id].x,
+                  y: newPositions[id].y
+                });
+              }
+            });
+            try {
+              await batch.commit();
+            } catch (error) {
+              console.error("Error updating nodes in batch:", error);
+              // Clear invalid selections
+              setSelectedNodes(prev => prev.filter(id => 
+                nodes.some(nodeCheck => nodeCheck.id === id)
+              ));
+            }
+            multiDragStartRef.current = {};
+            setGroupDelta({ x: 0, y: 0 });
+          } else {
+            setNodes((prev) =>
+              prev.map((n) => (n.id === node.id ? { ...n, x: finalX, y: finalY } : n))
+            );
+            try {
+              // Check if node still exists before updating
+              const nodeExists = nodes.some(n => n.id === node.id);
+              if (nodeExists) {
+              const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
+              await updateDoc(nodeRef, { x: finalX, y: finalY });
+              }
+            } catch (error) {
+              console.error("Error updating node position:", error);
+              // Clear invalid selections
+              setSelectedNodes(prev => prev.filter(id => 
+                nodes.some(n => n.id === id)
+              ));
+            }
+          }
+          setIsDragging(false);
+        }}
+      />
+    );
+  }, [
+    zoomRef, groupDelta, isNodeHighlighted, currentUserEmail, selectedNodes, 
+    editingNodeId, editedText, handleResizeMouseDown, handleNodeClick,
+    handleDoubleClick, handleTyping, handleTextBlur, setEditedText,
+    setHoveredNodeId, linkingSource, hoveredNodeId, nodes, outerRef,
+    panRef, dragStartRef, multiDragStartRef, setIsDragging, setNodes,
+    setGroupDelta, mindMapId, pushSingleNodeToUndoStack, pushSelectionToUndoStack,
+    setSelectedNodes, updateGroupDelta
+  ]);
+  
+  // Render only visible nodes with z-index sorting
+  return (
+    <>
+      {virtualVisibleNodes
+        .sort((a, b) => (a.zIndex || 1) - (b.zIndex || 1))
+        .map((node, index) => createNodeComponent(node, index))
+      }
+    </>
+  );
+});
+
 const MindMapEditor = () => {
   const { id: mindMapId } = useParams();
   const navigate = useNavigate();
 
-  // Persistent state from Firestore
-  const [nodes, setNodes] = useState([]);
-  const [links, setLinks] = useState([]);
+  // Optimized state management for nodes
+  const [rawNodes, setRawNodes] = useState([]); // Raw nodes from Firebase
+  const {
+    nodes,
+    updateNode: updateNodeOptimized,
+    updateNodes: updateNodesOptimized,
+    addNode: addNodeOptimized,
+    removeNode: removeNodeOptimized,
+    getNode,
+    getNodesByIds,
+    flush: flushNodeUpdates,
+    stateManager: nodeStateManager
+  } = useOptimizedNodes(rawNodes);
+
+  // Optimized state management for links
+  const [rawLinks, setRawLinks] = useState([]); // Raw links from Firebase
+  const {
+    links,
+    updateLink: updateLinkOptimized,
+    addLink: addLinkOptimized,
+    removeLink: removeLinkOptimized,
+    getLink,
+    getLinksBySource,
+    getLinksByTarget,
+    getLinksByNode,
+    removeLinksForNode,
+    flush: flushLinkUpdates,
+    stateManager: linkStateManager
+  } = useOptimizedLinks(rawLinks);
+
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [editedText, setEditedText] = useState("");
   const [linkingMode, setLinkingMode] = useState(false);
@@ -137,6 +1053,13 @@ const MindMapEditor = () => {
   const containerRef = useRef(null);
   const outerRef = useRef(null);
 
+  // Optimized visible nodes calculation (moved after outerRef declaration)
+  const visibleNodes = useVisibleNodes(nodes, pan, zoom, outerRef);
+
+  // Optimized visible links calculation
+  const visibleNodeIds = useMemo(() => new Set(visibleNodes.map(n => n.id)), [visibleNodes]);
+  const visibleLinks = useVisibleLinks(links, visibleNodeIds);
+
   const [tempBgColor, setTempBgColor] = useState("#1e1e1e");
   const [tempTextColor, setTempTextColor] = useState("#fff");
   const [tempText, setTempText] = useState("");
@@ -147,8 +1070,49 @@ const MindMapEditor = () => {
 
   // Z-index management
   const [tempZIndex, setTempZIndex] = useState(1);
+
+  // Optimized node operations with batching
+  const setNodes = useCallback((updater) => {
+    if (typeof updater === 'function') {
+      const currentNodes = nodeStateManager.getNodes();
+      const newNodes = updater(currentNodes);
+      setRawNodes(newNodes);
+    } else {
+      setRawNodes(updater);
+    }
+  }, [nodeStateManager]);
+
+  // Optimized single node update
+  const updateSingleNode = useCallback((id, updates, immediate = false) => {
+    updateNodeOptimized(id, updates, immediate);
+    
+    // Also update Firebase if immediate
+    if (immediate && Object.keys(updates).length > 0) {
+      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+      updateDoc(nodeRef, updates).catch(console.error);
+    }
+  }, [updateNodeOptimized, mindMapId]);
+
+  // Optimized batch node updates
+  const updateMultipleNodes = useCallback((nodeUpdates, immediate = false) => {
+    const hasChanges = updateNodesOptimized(nodeUpdates, immediate);
+    
+    // Also update Firebase if immediate and there are changes
+    if (immediate && hasChanges) {
+      const batch = writeBatch(db);
+      Object.entries(nodeUpdates).forEach(([id, updates]) => {
+        if (Object.keys(updates).length > 0) {
+          const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
+          batch.update(nodeRef, updates);
+        }
+      });
+      batch.commit().catch(console.error);
+    }
+    
+    return hasChanges;
+  }, [updateNodesOptimized, mindMapId]);
   
-  // Z-index functions
+  // Z-index functions with optimized updates
   const handleBringToFront = useCallback(async () => {
     if (selectedNodes.length === 0) return;
     
@@ -158,23 +1122,14 @@ const MindMapEditor = () => {
     const maxZIndex = Math.max(...nodes.map(n => n.zIndex || 1), 1);
     const newZIndex = maxZIndex + 1;
     
-    const batch = writeBatch(db);
-    selectedNodes.forEach((id) => {
-      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
-      batch.update(nodeRef, { zIndex: newZIndex });
+    // Optimized batch update
+    const updates = {};
+    selectedNodes.forEach(id => {
+      updates[id] = { zIndex: newZIndex };
     });
     
-    try {
-      await batch.commit();
-      setNodes((prev) =>
-        prev.map((n) =>
-          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
-        )
-      );
-    } catch (error) {
-      console.error("Error updating z-index:", error);
-    }
-  }, [selectedNodes, nodes, mindMapId]);
+    updateMultipleNodes(updates, true);
+  }, [selectedNodes, nodes, updateMultipleNodes]);
 
   const handleSendToBack = useCallback(async () => {
     if (selectedNodes.length === 0) return;
@@ -185,46 +1140,28 @@ const MindMapEditor = () => {
     const minZIndex = Math.min(...nodes.map(n => n.zIndex || 1), 1);
     const newZIndex = Math.max(minZIndex - 1, 0);
     
-    const batch = writeBatch(db);
-    selectedNodes.forEach((id) => {
-      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
-      batch.update(nodeRef, { zIndex: newZIndex });
+    // Optimized batch update
+    const updates = {};
+    selectedNodes.forEach(id => {
+      updates[id] = { zIndex: newZIndex };
     });
     
-    try {
-      await batch.commit();
-      setNodes((prev) =>
-        prev.map((n) =>
-          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
-        )
-      );
-    } catch (error) {
-      console.error("Error updating z-index:", error);
-    }
-  }, [selectedNodes, nodes, mindMapId]);
+    updateMultipleNodes(updates, true);
+  }, [selectedNodes, nodes, updateMultipleNodes]);
 
   const handleZIndexChange = useCallback(async (newZIndex) => {
     if (selectedNodes.length === 0) return;
     
     pushSelectionToUndoStack();
     
-    const batch = writeBatch(db);
-    selectedNodes.forEach((id) => {
-      const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
-      batch.update(nodeRef, { zIndex: newZIndex });
+    // Optimized batch update
+    const updates = {};
+    selectedNodes.forEach(id => {
+      updates[id] = { zIndex: newZIndex };
     });
     
-    try {
-      await batch.commit();
-      setNodes((prev) =>
-        prev.map((n) =>
-          selectedNodes.includes(n.id) ? { ...n, zIndex: newZIndex } : n
-        )
-      );
-    } catch (error) {
-      console.error("Error updating z-index:", error);
-    }
-  }, [selectedNodes, mindMapId]);
+    updateMultipleNodes(updates, true);
+  }, [selectedNodes, updateMultipleNodes]);
 
   const dragStartRef = useRef({ x: 0, y: 0 });
   const multiDragStartRef = useRef({});
@@ -582,10 +1519,7 @@ const MindMapEditor = () => {
       });
 
       // Create link between parent and new node
-      await addDoc(collection(db, "mindMaps", mindMapId, "links"), {
-        source: selectedNodes[0],
-        target: docRef.id,
-      });
+      await createLink(selectedNodes[0], docRef.id);
 
       // Select the new node and start editing
       setSelectedNodes([docRef.id]);
@@ -627,7 +1561,7 @@ const MindMapEditor = () => {
         id: doc.id,
         ...doc.data(),
       }));
-      setNodes(nodesData);
+      setRawNodes(nodesData); // Use optimized state management
           setIsLoading(false);
           setError(null);
         } catch (err) {
@@ -656,7 +1590,7 @@ const MindMapEditor = () => {
         id: doc.id,
         ...doc.data(),
       }));
-      setLinks(linksData);
+      setRawLinks(linksData); // Use optimized state management
         } catch (err) {
           console.error("Error processing links:", err);
         }
@@ -840,12 +1774,11 @@ const MindMapEditor = () => {
       } else if (linkingSource === node.id) {
         setLinkingSource(null);
       } else {
-        addDoc(collection(db, "mindMaps", mindMapId, "links"), {
-          source: linkingSource,
-          target: node.id,
-        })
-          .then(() => {
-            setLinkingSource(null);
+        createLink(linkingSource, node.id)
+          .then((linkId) => {
+            if (linkId) {
+              setLinkingSource(null);
+            }
           })
           .catch((error) => {
             console.error("Error creating link:", error);
@@ -1023,42 +1956,166 @@ const MindMapEditor = () => {
     setSelectionRedoStack((prev) => prev.slice(0, prev.length - 1));
   };
 
-  const handleResizeMouseDown = (node, e) => {
+  const handleResizeMouseDown = (node, e, direction = 'se') => {
     if (e.button !== 0) return;
-    pushSingleNodeToUndoStack(node);
+    
+    // Create a Map for O(1) node lookups instead of O(n) find operations
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    
+    // Determine which nodes to resize (single node or all selected nodes)
+    const nodesToResize = selectedNodes.length > 1 && selectedNodes.includes(node.id) 
+      ? selectedNodes.map(id => nodeMap.get(id)).filter(Boolean)
+      : [node];
+    
+    // Push all nodes to undo stack
+    nodesToResize.forEach(n => pushSingleNodeToUndoStack(n));
+    
     e.stopPropagation();
     e.preventDefault();
+    
     const startX = e.clientX;
     const startY = e.clientY;
-    const initialWidth = node.width || DEFAULT_WIDTH;
-    const initialHeight = node.height || DEFAULT_HEIGHT;
-    let finalWidth = initialWidth;
-    let finalHeight = initialHeight;
+    
+    // Store initial dimensions and positions for all nodes
+    const initialData = new Map(nodesToResize.map(n => [n.id, {
+      id: n.id,
+      width: n.width || DEFAULT_WIDTH,
+      height: n.height || DEFAULT_HEIGHT,
+      x: n.x,
+      y: n.y
+    }]));
+    
+    // Store final states for Firebase update
+    let finalStates = {};
+    let animationId = null;
+    let lastMoveTime = 0;
+    
+    // Memoize resize calculation function
+    const calculateNewDimensions = (nodeData, deltaX, deltaY, direction) => {
+      let newWidth = nodeData.width;
+      let newHeight = nodeData.height;
+      let newX = nodeData.x;
+      let newY = nodeData.y;
+      
+      // Apply resize based on direction
+      switch (direction) {
+        case 'se': // Southeast (bottom-right)
+          newWidth = Math.max(50, nodeData.width + deltaX);
+          newHeight = Math.max(20, nodeData.height + deltaY);
+          break;
+        case 'sw': // Southwest (bottom-left)
+          newWidth = Math.max(50, nodeData.width - deltaX);
+          newHeight = Math.max(20, nodeData.height + deltaY);
+          newX = nodeData.x + Math.min(deltaX, nodeData.width - 50);
+          break;
+        case 'ne': // Northeast (top-right)
+          newWidth = Math.max(50, nodeData.width + deltaX);
+          newHeight = Math.max(20, nodeData.height - deltaY);
+          newY = nodeData.y + Math.min(deltaY, nodeData.height - 20);
+          break;
+        case 'nw': // Northwest (top-left)
+          newWidth = Math.max(50, nodeData.width - deltaX);
+          newHeight = Math.max(20, nodeData.height - deltaY);
+          newX = nodeData.x + Math.min(deltaX, nodeData.width - 50);
+          newY = nodeData.y + Math.min(deltaY, nodeData.height - 20);
+          break;
+        case 'n': // North (top)
+          newHeight = Math.max(20, nodeData.height - deltaY);
+          newY = nodeData.y + Math.min(deltaY, nodeData.height - 20);
+          break;
+        case 's': // South (bottom)
+          newHeight = Math.max(20, nodeData.height + deltaY);
+          break;
+        case 'w': // West (left)
+          newWidth = Math.max(50, nodeData.width - deltaX);
+          newX = nodeData.x + Math.min(deltaX, nodeData.width - 50);
+          break;
+        case 'e': // East (right)
+          newWidth = Math.max(50, nodeData.width + deltaX);
+          break;
+      }
+      
+      return { newWidth, newHeight, newX, newY };
+    };
+    
+    // Throttled update function using requestAnimationFrame
+    const updateNodes = (deltaX, deltaY) => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      
+      animationId = requestAnimationFrame(() => {
+        const nodesToUpdate = new Map();
+        
+        // Calculate all new dimensions first
+        for (const [nodeId, nodeData] of initialData) {
+          const dimensions = calculateNewDimensions(nodeData, deltaX, deltaY, direction);
+          nodesToUpdate.set(nodeId, dimensions);
+          
+          // Store final state for this node
+          finalStates[nodeId] = dimensions;
+        }
+        
+        // Single state update with all changes
+        setNodes((prevNodes) =>
+          prevNodes.map((n) => {
+            const update = nodesToUpdate.get(n.id);
+            if (!update) return n;
+            
+            return {
+              ...n,
+              width: update.newWidth,
+              height: update.newHeight,
+              x: update.newX,
+              y: update.newY
+            };
+          })
+        );
+      });
+    };
+    
+    // Throttled mouse move handler
     const onMouseMove = (moveEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-      finalWidth = Math.max(50, initialWidth + deltaX / zoom);
-      finalHeight = Math.max(20, initialHeight + deltaY / zoom);
-      setNodes((prevNodes) =>
-        prevNodes.map((n) =>
-          n.id === node.id
-            ? { ...n, width: finalWidth, height: finalHeight }
-            : n,
-        ),
-      );
+      const now = performance.now();
+      
+      // Throttle to ~60fps (16ms)
+      if (now - lastMoveTime < 16) return;
+      lastMoveTime = now;
+      
+      const deltaX = (moveEvent.clientX - startX) / zoom;
+      const deltaY = (moveEvent.clientY - startY) / zoom;
+      
+      updateNodes(deltaX, deltaY);
     };
 
     const onMouseUp = async () => {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
+      
+      // Cancel any pending animation frame
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      
+      // Batch Firebase updates for better performance
       try {
-        const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
-        await updateDoc(nodeRef, { width: finalWidth, height: finalHeight });
+        if (Object.keys(finalStates).length > 0) {
+          // Use Firebase batch write for atomic updates
+          const batch = writeBatch(db);
+          
+          for (const [nodeId, finalState] of Object.entries(finalStates)) {
+            const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
+            batch.update(nodeRef, finalState);
+          }
+          
+          await batch.commit();
+        }
       } catch (error) {
-        console.error("Error updating node size:", error);
+        console.error("Error updating node sizes:", error);
       }
     };
-    document.addEventListener("mousemove", onMouseMove);
+    
+    document.addEventListener("mousemove", onMouseMove, { passive: true });
     document.addEventListener("mouseup", onMouseUp);
   };
   // --- ZOOM HANDLERS ---
@@ -1272,6 +2329,10 @@ const MindMapEditor = () => {
       return;
     }
     
+    if (editingNodeId === node.id) {
+      return; // Prevent double-click from reverting text changes
+    }
+    
     const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
     updateDoc(nodeRef, { lockedBy: currentUserEmail, typing: true }).catch((error) => {
       console.error("Error locking node:", error);
@@ -1279,7 +2340,7 @@ const MindMapEditor = () => {
     
     setEditingNodeId(node.id);
     setEditedText(node.text);
-  }, [linkingMode, currentUserEmail, mindMapId]);
+  }, [linkingMode, currentUserEmail, mindMapId, editingNodeId]);
 
   const handleTextBlur = useCallback(async (nodeId) => {
     if (!editedText.trim()) {
@@ -1374,6 +2435,10 @@ const MindMapEditor = () => {
         fontSize: nodeData.fontSize || 14,
         fontFamily: nodeData.fontFamily || "cursive",
         bgColor: nodeData.bgColor || null,
+        // Add support for image node properties
+        type: nodeData.type || "text",
+        imageUrl: nodeData.imageUrl || null,
+        storagePath: nodeData.storagePath || null,
         createdAt: serverTimestamp(),
       });
       
@@ -1411,6 +2476,10 @@ const MindMapEditor = () => {
         fontSize: nodeData.fontSize || 14,
         fontFamily: nodeData.fontFamily || "cursive",
         bgColor: nodeData.bgColor || null,
+        // Add support for image node properties
+        type: nodeData.type || "text",
+        imageUrl: nodeData.imageUrl || null,
+        storagePath: nodeData.storagePath || null,
         createdAt: serverTimestamp(),
       });
       
@@ -2746,7 +3815,7 @@ const MindMapEditor = () => {
     return { visibleLeft, visibleTop, visibleWidth, visibleHeight };
   };
   
-  const visibleNodes = useMemo(() => {
+  const legacyVisibleNodes = useMemo(() => {
     // If outerRef is not available (e.g., on initial render) return all nodes.
     if (!outerRef.current) return nodes;
   
@@ -2766,7 +3835,7 @@ const MindMapEditor = () => {
     });
   }, [nodes, Math.round(pan.x / 50) * 50, Math.round(pan.y / 50) * 50, Math.round(zoom * 20) / 20]); // Quantized dependencies to reduce recalculations
   
-  const visibleLinks = useMemo(() => {
+  const legacyVisibleLinks = useMemo(() => {
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
     return links.filter(
       (link) => visibleIds.has(link.source) || visibleIds.has(link.target)
@@ -2796,9 +3865,61 @@ const MindMapEditor = () => {
     }
   }, [tempBgColor, tempTextColor, tempFontSize, tempTextStyle, tempTextAlign, tempFontFamily, tempZIndex, activeCustomizationNode]);
 
+  // Helper function to download image nodes as PNG
+  const handleDownloadImage = async (node) => {
+    try {
+      if (!node || node.type !== 'image' || !node.imageUrl) {
+        console.error("Invalid image node for download");
+        return;
+      }
+
+      // Create a proper image URL that works with CORS
+      const imageUrl = node.imageUrl.includes('firebasestorage.googleapis.com') 
+        ? `/firebase-storage${node.imageUrl.split('firebasestorage.googleapis.com')[1]}`
+        : node.imageUrl;
+
+      // Fetch the image
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error("Failed to fetch image");
+      }
+
+      const blob = await response.blob();
+      
+      // Create download link
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      
+      // Generate filename based on node text or a default name
+      const fileName = node.text 
+        ? `${node.text.replace(/[^a-zA-Z0-9]/g, '_')}.png`
+        : `mindmap_image_${Date.now()}.png`;
+      
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the object URL
+      URL.revokeObjectURL(downloadUrl);
+      
+      console.log(`Downloaded image: ${fileName}`);
+    } catch (error) {
+      console.error("Error downloading image:", error);
+      // You could add a toast notification here if you have one
+    }
+  };
+
   const ContextMenu = () => {
     if (!contextMenuu.visible) return null;
     if (rightClickMoved) return null;
+    
+    // Check if any selected nodes are image nodes
+    const selectedImageNodes = selectedNodes
+      .map(nodeId => nodes.find(n => n.id === nodeId))
+      .filter(node => node && node.type === 'image' && node.imageUrl);
+    
     return (
       <div
         style={{
@@ -2855,6 +3976,27 @@ const MindMapEditor = () => {
             >
               Copy
             </div>
+            {selectedImageNodes.length > 0 && (
+              <div className="context-menu-item"
+                style={{ padding: "4px 8px", cursor: "pointer" }}
+                onMouseDown={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeContextMenu();
+                  
+                  // Download all selected image nodes
+                  for (const imageNode of selectedImageNodes) {
+                    await handleDownloadImage(imageNode);
+                    // Add a small delay between downloads to avoid overwhelming the browser
+                    if (selectedImageNodes.length > 1) {
+                      await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                  }
+                }}
+              >
+                PNG Download {selectedImageNodes.length > 1 ? `(${selectedImageNodes.length})` : ''}
+              </div>
+            )}
             <div className="context-menu-item"
               style={{ padding: "4px 8px", cursor: "pointer" }}
               onMouseDown={(e) => {
@@ -3673,6 +4815,378 @@ const MindMapEditor = () => {
       </Button>
     );
   };
+
+  // Helper function to calculate bounding box of selected nodes
+  const getSelectedNodesBounds = () => {
+    if (selectedNodes.length === 0) return null;
+    
+    const selectedNodeData = selectedNodes
+      .map(id => nodes.find(n => n.id === id))
+      .filter(Boolean);
+    
+    if (selectedNodeData.length === 0) return null;
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
+    selectedNodeData.forEach(node => {
+      const width = node.width || DEFAULT_WIDTH;
+      const height = node.height || DEFAULT_HEIGHT;
+      
+      // Account for group delta during multi-node dragging
+      const nodeIsSelected = selectedNodes.includes(node.id);
+      const x = node.x + (nodeIsSelected ? groupDelta.x : 0);
+      const y = node.y + (nodeIsSelected ? groupDelta.y : 0);
+      
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    });
+    
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      nodes: selectedNodeData
+    };
+  };
+
+  // Enhanced resize function for unified bounding box
+  const handleUnifiedResize = (direction, e) => {
+    if (e.button !== 0) return;
+    if (selectedNodes.length === 0) return;
+    
+    const bounds = getSelectedNodesBounds();
+    if (!bounds) return;
+    
+    // Push all selected nodes to undo stack as a single batch operation
+    pushSelectionToUndoStack();
+    
+    e.stopPropagation();
+    e.preventDefault();
+    
+    const startX = e.clientX;
+    const startY = e.clientY;
+    
+    // Store initial data for all selected nodes
+    const initialNodes = bounds.nodes.map(node => ({
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      width: node.width || DEFAULT_WIDTH,
+      height: node.height || DEFAULT_HEIGHT,
+      fontSize: node.fontSize || 14, // Store original font size
+      // Store relative position within bounding box
+      relativeX: (node.x - bounds.x) / bounds.width,
+      relativeY: (node.y - bounds.y) / bounds.height,
+      relativeWidth: (node.width || DEFAULT_WIDTH) / bounds.width,
+      relativeHeight: (node.height || DEFAULT_HEIGHT) / bounds.height
+    }));
+    
+    const initialBounds = { ...bounds };
+    let finalStates = {};
+    
+    const onMouseMove = (moveEvent) => {
+      const deltaX = (moveEvent.clientX - startX) / zoom;
+      const deltaY = (moveEvent.clientY - startY) / zoom;
+      
+      let newBoundsX = initialBounds.x;
+      let newBoundsY = initialBounds.y;
+      let newBoundsWidth = initialBounds.width;
+      let newBoundsHeight = initialBounds.height;
+      
+      // Calculate new bounding box based on resize direction
+      switch (direction) {
+        case 'nw':
+          newBoundsX = initialBounds.x + deltaX;
+          newBoundsY = initialBounds.y + deltaY;
+          newBoundsWidth = Math.max(100, initialBounds.width - deltaX);
+          newBoundsHeight = Math.max(50, initialBounds.height - deltaY);
+          break;
+        case 'ne':
+          newBoundsY = initialBounds.y + deltaY;
+          newBoundsWidth = Math.max(100, initialBounds.width + deltaX);
+          newBoundsHeight = Math.max(50, initialBounds.height - deltaY);
+          break;
+        case 'sw':
+          newBoundsX = initialBounds.x + deltaX;
+          newBoundsWidth = Math.max(100, initialBounds.width - deltaX);
+          newBoundsHeight = Math.max(50, initialBounds.height + deltaY);
+          break;
+        case 'se':
+          newBoundsWidth = Math.max(100, initialBounds.width + deltaX);
+          newBoundsHeight = Math.max(50, initialBounds.height + deltaY);
+          break;
+        case 'n':
+          newBoundsY = initialBounds.y + deltaY;
+          newBoundsHeight = Math.max(50, initialBounds.height - deltaY);
+          break;
+        case 's':
+          newBoundsHeight = Math.max(50, initialBounds.height + deltaY);
+          break;
+        case 'w':
+          newBoundsX = initialBounds.x + deltaX;
+          newBoundsWidth = Math.max(100, initialBounds.width - deltaX);
+          break;
+        case 'e':
+          newBoundsWidth = Math.max(100, initialBounds.width + deltaX);
+          break;
+      }
+      
+      // Update all nodes proportionally
+      setNodes(prevNodes =>
+        prevNodes.map(node => {
+          const initialNode = initialNodes.find(n => n.id === node.id);
+          if (!initialNode) return node;
+          
+          // Calculate new position and size based on relative position in bounding box
+          const newX = newBoundsX + (initialNode.relativeX * newBoundsWidth);
+          const newY = newBoundsY + (initialNode.relativeY * newBoundsHeight);
+          const newWidth = Math.max(50, initialNode.relativeWidth * newBoundsWidth);
+          const newHeight = Math.max(20, initialNode.relativeHeight * newBoundsHeight);
+          
+          // Calculate font size scaling based on average of width and height scaling
+          const widthScale = newWidth / initialNode.width;
+          const heightScale = newHeight / initialNode.height;
+          const averageScale = (widthScale + heightScale) / 2;
+          const newFontSize = Math.max(8, Math.round(initialNode.fontSize * averageScale)); // Minimum 8px font
+          
+          // Store final state
+          finalStates[node.id] = {
+            x: newX,
+            y: newY,
+            width: newWidth,
+            height: newHeight,
+            fontSize: newFontSize
+          };
+          
+          return {
+            ...node,
+            x: newX,
+            y: newY,
+            width: newWidth,
+            height: newHeight,
+            fontSize: newFontSize
+          };
+        })
+      );
+    };
+
+    const onMouseUp = async () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      
+      // Update all nodes in Firebase
+      try {
+        const updatePromises = Object.keys(finalStates).map(async (nodeId) => {
+          const finalState = finalStates[nodeId];
+          const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
+          await updateDoc(nodeRef, finalState);
+        });
+        
+        await Promise.all(updatePromises);
+      } catch (error) {
+        console.error("Error updating nodes:", error);
+      }
+    };
+    
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  // Unified Resize Bounding Box Component
+  const ResizeBoundingBox = () => {
+    if (selectedNodes.length === 0) return null;
+    
+    const bounds = getSelectedNodesBounds();
+    if (!bounds) return null;
+    
+    return (
+      <div
+        style={{
+          position: "absolute",
+          left: bounds.x - 8,
+          top: bounds.y - 8,
+          width: bounds.width + 16,
+          height: bounds.height + 16,
+          border: "2px dashed #8896DD",
+          backgroundColor: "rgba(136, 150, 221, 0.05)",
+          pointerEvents: "none",
+          zIndex: 999,
+          transition: "none", // Prevent any inherited transitions
+          boxSizing: "border-box", // Ensure consistent sizing
+        }}
+      >
+        {/* Corner handles */}
+        <div
+          className="resize-handle unified nw"
+          onMouseDown={(e) => handleUnifiedResize('nw', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified ne"
+          onMouseDown={(e) => handleUnifiedResize('ne', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified sw"
+          onMouseDown={(e) => handleUnifiedResize('sw', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified se"
+          onMouseDown={(e) => handleUnifiedResize('se', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        
+        {/* Side handles */}
+        <div
+          className="resize-handle unified n"
+          onMouseDown={(e) => handleUnifiedResize('n', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified s"
+          onMouseDown={(e) => handleUnifiedResize('s', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified w"
+          onMouseDown={(e) => handleUnifiedResize('w', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        <div
+          className="resize-handle unified e"
+          onMouseDown={(e) => handleUnifiedResize('e', e)}
+          style={{ pointerEvents: "auto" }}
+        />
+        
+        {/* Connecting lines for professional look */}
+        <div style={{
+          position: "absolute",
+          top: 0,
+          left: 8,
+          right: 8,
+          height: "2px",
+          backgroundColor: "#8896DD",
+          opacity: 0.6
+        }} />
+        <div style={{
+          position: "absolute",
+          bottom: 0,
+          left: 8,
+          right: 8,
+          height: "2px",
+          backgroundColor: "#8896DD",
+          opacity: 0.6
+        }} />
+        <div style={{
+          position: "absolute",
+          left: 0,
+          top: 8,
+          bottom: 8,
+          width: "2px",
+          backgroundColor: "#8896DD",
+          opacity: 0.6
+        }} />
+        <div style={{
+          position: "absolute",
+          right: 0,
+          top: 8,
+          bottom: 8,
+          width: "2px",
+          backgroundColor: "#8896DD",
+          opacity: 0.6
+        }} />
+      </div>
+    );
+  };
+
+  // Optimized link operations with batching
+  const setLinks = useCallback((updater) => {
+    if (typeof updater === 'function') {
+      const currentLinks = linkStateManager.getLinks();
+      const newLinks = updater(currentLinks);
+      setRawLinks(newLinks);
+    } else {
+      setRawLinks(updater);
+    }
+  }, [linkStateManager]);
+
+  // Optimized single link update
+  const updateSingleLink = useCallback((id, updates, immediate = false) => {
+    updateLinkOptimized(id, updates, immediate);
+    
+    // Also update Firebase if immediate
+    if (immediate && Object.keys(updates).length > 0) {
+      const linkRef = doc(db, "mindMaps", mindMapId, "links", id);
+      updateDoc(linkRef, updates).catch(console.error);
+    }
+  }, [updateLinkOptimized, mindMapId]);
+
+  // Optimized batch link updates
+  const updateMultipleLinks = useCallback((linkUpdates, immediate = false) => {
+    const hasChanges = updateLinkOptimized(linkUpdates, immediate);
+    
+    // Also update Firebase if immediate and there are changes
+    if (immediate && hasChanges) {
+      const batch = writeBatch(db);
+      Object.entries(linkUpdates).forEach(([id, updates]) => {
+        if (Object.keys(updates).length > 0) {
+          const linkRef = doc(db, "mindMaps", mindMapId, "links", id);
+          batch.update(linkRef, updates);
+        }
+      });
+      batch.commit().catch(console.error);
+    }
+    
+    return hasChanges;
+  }, [updateLinkOptimized, mindMapId]);
+
+  // Optimized link creation with immediate Firebase sync
+  const createLink = useCallback(async (source, target) => {
+    try {
+      const linkData = { source, target };
+      const docRef = await addDoc(collection(db, "mindMaps", mindMapId, "links"), linkData);
+      // The optimized state will be updated by Firebase subscription
+      return docRef.id;
+    } catch (error) {
+      console.error("Error creating link:", error);
+      return null;
+    }
+  }, [mindMapId]);
+
+  // Optimized link deletion with batch Firebase sync
+  const deleteLink = useCallback(async (linkId) => {
+    try {
+      await deleteDoc(doc(db, "mindMaps", mindMapId, "links", linkId));
+      // The optimized state will be updated by Firebase subscription
+      return true;
+    } catch (error) {
+      console.error("Error deleting link:", error);
+      return false;
+    }
+  }, [mindMapId]);
+
+  // Optimized function to delete all links for a node
+  const deleteLinksForNode = useCallback(async (nodeId) => {
+    const connectedLinks = getLinksByNode(nodeId);
+    if (connectedLinks.length === 0) return;
+
+    try {
+      const batch = writeBatch(db);
+      connectedLinks.forEach(link => {
+        const linkRef = doc(db, "mindMaps", mindMapId, "links", link.id);
+        batch.delete(linkRef);
+      });
+      await batch.commit();
+      return true;
+    } catch (error) {
+      console.error("Error deleting links for node:", error);
+      return false;
+    }
+  }, [getLinksByNode, mindMapId]);
 
   return (
     <div
@@ -4713,14 +6227,26 @@ const MindMapEditor = () => {
             const sourceNode = nodes.find((n) => n.id === link.source);
             const targetNode = nodes.find((n) => n.id === link.target);
             if (!sourceNode || !targetNode) return null;
+            
             const sourceWidth = sourceNode.width || DEFAULT_WIDTH;
             const sourceHeight = sourceNode.height || DEFAULT_HEIGHT;
             const targetWidth = targetNode.width || DEFAULT_WIDTH;
             const targetHeight = targetNode.height || DEFAULT_HEIGHT;
-            const x1 = sourceNode.x + sourceWidth / 2;
-            const y1 = sourceNode.y + sourceHeight / 2;
-            const x2 = targetNode.x + targetWidth / 2;
-            const y2 = targetNode.y + targetHeight / 2;
+            
+            // Account for group delta during multi-node dragging
+            const sourceIsSelected = selectedNodes.includes(sourceNode.id);
+            const targetIsSelected = selectedNodes.includes(targetNode.id);
+            
+            const sourceX = sourceNode.x + (sourceIsSelected ? groupDelta.x : 0);
+            const sourceY = sourceNode.y + (sourceIsSelected ? groupDelta.y : 0);
+            const targetX = targetNode.x + (targetIsSelected ? groupDelta.x : 0);
+            const targetY = targetNode.y + (targetIsSelected ? groupDelta.y : 0);
+            
+            const x1 = sourceX + sourceWidth / 2;
+            const y1 = sourceY + sourceHeight / 2;
+            const x2 = targetX + targetWidth / 2;
+            const y2 = targetY + targetHeight / 2;
+            
             return (
               <line
                 key={link.id}
@@ -4734,158 +6260,41 @@ const MindMapEditor = () => {
             );
           })}
         </svg>
-        {visibleNodes
-          .sort((a, b) => (a.zIndex || 1) - (b.zIndex || 1)) // Sort by z-index, lowest first
-          .map((node) => (
-          <MindMapNode
-            key={node.id}
-            node={node}
-            zoom={zoomRef.current}
-            groupDelta={groupDelta}
-            isHighlighted={isNodeHighlighted(node)}
-            currentUserEmail={currentUserEmail}
-            selectedNodes={selectedNodes}
-            editingNodeId={editingNodeId}
-            editedText={editedText}
-            handleResizeMouseDown={isMobile ? () => {} : handleResizeMouseDown}
-            handleNodeClick={isMobile ? () => {} : handleNodeClick}
-            handleDoubleClick={isMobile ? () => {} : handleDoubleClick}
-            handleTyping={isMobile ? () => {} : handleTyping}
-            handleTextBlur={isMobile ? () => {} : handleTextBlur}
-            setEditedText={isMobile ? () => {} : setEditedText}
-            setHoveredNodeId={isMobile ? () => {} : setHoveredNodeId}
-            linkingSource={linkingSource}
-            hoveredNodeId={hoveredNodeId}
-            onStart={isMobile ? () => false : (e, data) => {
-              if (editingNodeId === node.id) return false;
-              setIsDragging(true);
-              const rect = outerRef.current.getBoundingClientRect();
-              const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
-              const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
-              const offsetX = cursorWorldX - node.x;
-              const offsetY = cursorWorldY - node.y;
-              dragStartRef.current = {
-                offsetX,
-                offsetY,
-                initialX: node.x,
-                initialY: node.y
-              };
-              if (selectedNodes.length < 1 || selectedNodes.length < 2) {
-                pushSingleNodeToUndoStack(node);
-              }
-              if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
-                if (Object.keys(multiDragStartRef.current).length === 0) {
-                  selectedNodes.forEach((id) => {
-                    const found = nodes.find((n) => n.id === id);
-                    if (found) {
-                      multiDragStartRef.current[id] = { x: found.x, y: found.y };
-                    }
-                  });
-                }
-              }
-            }}
-            onDrag={isMobile ? () => {} : (e, data) => {
-              const rect = outerRef.current.getBoundingClientRect();
-              const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
-              const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
-              const newX = cursorWorldX - dragStartRef.current.offsetX;
-              const newY = cursorWorldY - dragStartRef.current.offsetY;
-              if (selectedNodes.length > 1 && selectedNodes.includes(node.id)) {
-                updateGroupDelta({
-                  x: newX - dragStartRef.current.initialX,
-                  y: newY - dragStartRef.current.initialY
-                });
-              } else {
-                setNodes((prev) =>
-                  prev.map((n) => (n.id === node.id ? { ...n, x: newX, y: newY } : n))
-                );
-              }
-            }}
-            onStop={isMobile ? () => {} : async (e, data) => {
-              const rect = outerRef.current.getBoundingClientRect();
-              const cursorWorldX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
-              const cursorWorldY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
-              const finalX = cursorWorldX - dragStartRef.current.offsetX;
-              const finalY = cursorWorldY - dragStartRef.current.offsetY;
-              const distance = Math.sqrt(
-                Math.pow(finalX - dragStartRef.current.initialX, 2) +
-                  Math.pow(finalY - dragStartRef.current.initialY, 2)
-              );
-              const threshold = 0.01;
-              if (distance < threshold) {
-                setIsDragging(false);
-                return;
-              }
-              if (selectedNodes.length > 1) {
-                pushSelectionToUndoStack();
-                const deltaX = finalX - dragStartRef.current.initialX;
-                const deltaY = finalY - dragStartRef.current.initialY;
-                const newPositions = {};
-                selectedNodes.forEach((id) => {
-                  const startPos = multiDragStartRef.current[id];
-                  if (startPos) {
-                    newPositions[id] = {
-                      x: startPos.x + deltaX,
-                      y: startPos.y + deltaY
-                    };
-                  }
-                });
-                setNodes((prev) =>
-                  prev.map((n) =>
-                    selectedNodes.includes(n.id) && newPositions[n.id] && n.id !== node.id
-                      ? { ...n, x: newPositions[n.id].x, y: newPositions[n.id].y }
-                      : n
-                  )
-                );
-                const batch = writeBatch(db);
-                // Filter out any selected nodes that don't exist in the current nodes array
-                const validSelectedNodes = selectedNodes.filter(id => 
-                  nodes.some(node => node.id === id)
-                );
-                
-                validSelectedNodes.forEach((id) => {
-                  if (newPositions[id]) {
-                    const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", id);
-                    batch.update(nodeRef, {
-                      x: newPositions[id].x,
-                      y: newPositions[id].y
-                    });
-                  }
-                });
-                try {
-                  await batch.commit();
-                } catch (error) {
-                  console.error("Error updating nodes in batch:", error);
-                  // Clear invalid selections
-                  setSelectedNodes(prev => prev.filter(id => 
-                    nodes.some(node => node.id === id)
-                  ));
-                }
-                multiDragStartRef.current = {};
-                setGroupDelta({ x: 0, y: 0 });
-              } else {
-                setNodes((prev) =>
-                  prev.map((n) => (n.id === node.id ? { ...n, x: finalX, y: finalY } : n))
-                );
-                try {
-                  // Check if node still exists before updating
-                  const nodeExists = nodes.some(n => n.id === node.id);
-                  if (nodeExists) {
-                  const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", node.id);
-                  await updateDoc(nodeRef, { x: finalX, y: finalY });
-                  }
-                } catch (error) {
-                  console.error("Error updating node position:", error);
-                  // Clear invalid selections
-                  setSelectedNodes(prev => prev.filter(id => 
-                    nodes.some(n => n.id === id)
-                  ));
-                }
-              }
-              setIsDragging(false);
-            }}
-          />
-        ))}
+        <VirtualNodeRenderer
+          nodes={nodes}
+          zoom={zoomRef.current}
+          pan={pan}
+          outerRef={outerRef}
+          visibleNodes={visibleNodes}
+          selectedNodes={selectedNodes}
+          groupDelta={groupDelta}
+          editingNodeId={editingNodeId}
+          editedText={editedText}
+          hoveredNodeId={hoveredNodeId}
+          linkingSource={linkingSource}
+          currentUserEmail={currentUserEmail}
+          isNodeHighlighted={isNodeHighlighted}
+          handleResizeMouseDown={isMobile ? () => {} : handleResizeMouseDown}
+          handleNodeClick={isMobile ? () => {} : handleNodeClick}
+          handleDoubleClick={isMobile ? () => {} : handleDoubleClick}
+          handleTyping={isMobile ? () => {} : handleTyping}
+          handleTextBlur={isMobile ? () => {} : handleTextBlur}
+          setEditedText={isMobile ? () => {} : setEditedText}
+          setHoveredNodeId={isMobile ? () => {} : setHoveredNodeId}
+          dragStartRef={dragStartRef}
+          multiDragStartRef={multiDragStartRef}
+          setIsDragging={setIsDragging}
+          setNodes={setNodes}
+          setGroupDelta={setGroupDelta}
+          mindMapId={mindMapId}
+          pushSingleNodeToUndoStack={pushSingleNodeToUndoStack}
+          pushSelectionToUndoStack={pushSelectionToUndoStack}
+          setSelectedNodes={setSelectedNodes}
+          updateGroupDelta={updateGroupDelta}
+          panRef={panRef}
+          zoomRef={zoomRef}
+        />
+        <ResizeBoundingBox />
         {selectionBox && (() => {
           const avgDimension = (selectionBox.width + selectionBox.height) / 2;
           const computedStrokeWidth = Math.max(1, avgDimension * 0.02);
@@ -4940,4 +6349,4 @@ const MindMapEditor = () => {
   );
 };  
 
-  export default MindMapEditor;
+export default MindMapEditor;

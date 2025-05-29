@@ -194,20 +194,7 @@ const MindMapNode = memo(({
             Typing...
           </div>
         )}
-        {/* Resize handle */}
-        <div
-          onMouseDown={(e) => handleResizeMouseDown(node, e)}
-          style={{
-            position: "absolute",
-            bottom: 0,
-            right: 0,
-            width: "10%",
-            height: "10%",
-            opacity: 0.5,
-            cursor: "nwse-resize",
-            backgroundColor: "#ccc",
-          }}
-        ></div>
+        {/* Note: Resize handles moved to unified bounding box system in MindMapEditor */}
       </div>
     </Draggable>
   );
