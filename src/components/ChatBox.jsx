@@ -12,6 +12,7 @@ import { db } from "../firebase/firebase";
 import { getDatabase, ref, get } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "../firebase/firebase";
+import { fetchImage, imageUrlToBase64 } from "../utils/imageUtils";
 
 
 
@@ -313,24 +314,10 @@ const ChatBox = ({
             const originalImageNode = selectedNodesData.find(n => n.type === 'image' && n.imageUrl);
             if (originalImageNode) {
               // Get the original image base64 data
-              const imageUrl = originalImageNode.imageUrl.includes('firebasestorage.googleapis.com') 
-                ? `/firebase-storage${originalImageNode.imageUrl.split('firebasestorage.googleapis.com')[1]}`
-                : originalImageNode.imageUrl;
-              
-              const response = await fetch(imageUrl);
-              if (response.ok) {
-                const blob = await response.blob();
-                const originalImageBase64 = await new Promise((resolve) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                  reader.readAsDataURL(blob);
-                });
+              const originalImageBase64 = await imageUrlToBase64(originalImageNode.imageUrl);
                 
-                console.log(`Editing image for node ${node.id} with prompt: ${node.imageEditPrompt}`);
-                imageData = await generateImage(node.imageEditPrompt, originalImageBase64);
-              } else {
-                throw new Error("Could not fetch original image for editing");
-              }
+              console.log(`Editing image for node ${node.id} with prompt: ${node.imageEditPrompt}`);
+              imageData = await generateImage(node.imageEditPrompt, originalImageBase64);
             } else {
               throw new Error("No original image found for editing");
             }
@@ -623,12 +610,8 @@ Example NEW IMAGE GENERATION response:
       for (const node of selectedNodesData) {
         if (node.type === 'image' && node.imageUrl) {
           try {
-            // Simple approach: try to fetch the image with proper headers
-            const imageUrl = node.imageUrl.includes('firebasestorage.googleapis.com') 
-              ? `/firebase-storage${node.imageUrl.split('firebasestorage.googleapis.com')[1]}`
-              : node.imageUrl;
-              
-            const response = await fetch(imageUrl);
+            // Use the utility function to fetch the image properly
+            const response = await fetchImage(node.imageUrl);
             
             if (response.ok) {
               const blob = await response.blob();

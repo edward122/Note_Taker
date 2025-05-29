@@ -67,6 +67,8 @@ import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
 // Import RTDB functions
 import { getDatabase, ref, set, onValue, off } from "firebase/database";
 
+import { fetchImage } from "../utils/imageUtils";
+
 const DEFAULT_WIDTH = 100;
 const DEFAULT_HEIGHT = 40;
 const MIN_ZOOM = 0.1;
@@ -3873,13 +3875,8 @@ const MindMapEditor = () => {
         return;
       }
 
-      // Create a proper image URL that works with CORS
-      const imageUrl = node.imageUrl.includes('firebasestorage.googleapis.com') 
-        ? `/firebase-storage${node.imageUrl.split('firebasestorage.googleapis.com')[1]}`
-        : node.imageUrl;
-
-      // Fetch the image
-      const response = await fetch(imageUrl);
+      // Use the utility function to fetch the image properly
+      const response = await fetchImage(node.imageUrl);
       if (!response.ok) {
         throw new Error("Failed to fetch image");
       }
