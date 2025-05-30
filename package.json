@@ -31,6 +31,7 @@
     "@mui/material": "^7.0.1",
     "firebase": "^11.5.0",
     "html2canvas": "^1.4.1",
+    "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",
     "react-color": "^2.19.3",
     "react-draggable": "^4.4.6",

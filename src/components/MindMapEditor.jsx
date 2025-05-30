@@ -4944,10 +4944,14 @@ const MindMapEditor = () => {
           const newHeight = Math.max(20, initialNode.relativeHeight * newBoundsHeight);
           
           // Calculate font size scaling based on average of width and height scaling
-          const widthScale = newWidth / initialNode.width;
-          const heightScale = newHeight / initialNode.height;
-          const averageScale = (widthScale + heightScale) / 2;
-          const newFontSize = Math.max(8, Math.round(initialNode.fontSize * averageScale)); // Minimum 8px font
+          // Only scale text if multiple nodes are selected, not for single nodes
+          let newFontSize = initialNode.fontSize; // Default to original font size
+          if (selectedNodes.length > 1) {
+            const widthScale = newWidth / initialNode.width;
+            const heightScale = newHeight / initialNode.height;
+            const averageScale = (widthScale + heightScale) / 2;
+            newFontSize = Math.max(8, Math.round(initialNode.fontSize * averageScale)); // Minimum 8px font
+          }
           
           // Store final state
           finalStates[node.id] = {
@@ -4998,7 +5002,20 @@ const MindMapEditor = () => {
     
     const bounds = getSelectedNodesBounds();
     if (!bounds) return null;
-    
+
+    // Calculate average dimension of selected nodes for dynamic handle sizing
+    const avgNodeDimension = bounds.nodes.reduce((sum, node) => {
+      const width = node.width || DEFAULT_WIDTH;
+      const height = node.height || DEFAULT_HEIGHT;
+      return sum + (width + height) / 2;
+    }, 0) / bounds.nodes.length;
+
+    // Scale handle size based on average node size
+    const baseHandleSize = 14; // Base size from CSS
+    const handleScale = Math.max(0.7, Math.min(2.0, avgNodeDimension / 120)); // Scale between 0.7x and 2x
+    const dynamicHandleSize = Math.round(baseHandleSize * handleScale);
+    const handleOffset = Math.round(dynamicHandleSize / 2);
+
     return (
       <div
         style={{
@@ -5019,44 +5036,96 @@ const MindMapEditor = () => {
         <div
           className="resize-handle unified nw"
           onMouseDown={(e) => handleUnifiedResize('nw', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            top: `-${handleOffset}px`,
+            left: `-${handleOffset}px`
+          }}
         />
         <div
           className="resize-handle unified ne"
           onMouseDown={(e) => handleUnifiedResize('ne', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            top: `-${handleOffset}px`,
+            right: `-${handleOffset}px`
+          }}
         />
         <div
           className="resize-handle unified sw"
           onMouseDown={(e) => handleUnifiedResize('sw', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            bottom: `-${handleOffset}px`,
+            left: `-${handleOffset}px`
+          }}
         />
         <div
           className="resize-handle unified se"
           onMouseDown={(e) => handleUnifiedResize('se', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            bottom: `-${handleOffset}px`,
+            right: `-${handleOffset}px`
+          }}
         />
         
         {/* Side handles */}
         <div
           className="resize-handle unified n"
           onMouseDown={(e) => handleUnifiedResize('n', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            top: `-${handleOffset}px`,
+            left: '50%',
+            transform: 'translateX(-50%)'
+          }}
         />
         <div
           className="resize-handle unified s"
           onMouseDown={(e) => handleUnifiedResize('s', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            bottom: `-${handleOffset}px`,
+            left: '50%',
+            transform: 'translateX(-50%)'
+          }}
         />
         <div
           className="resize-handle unified w"
           onMouseDown={(e) => handleUnifiedResize('w', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            top: '50%',
+            left: `-${handleOffset}px`,
+            transform: 'translateY(-50%)'
+          }}
         />
         <div
           className="resize-handle unified e"
           onMouseDown={(e) => handleUnifiedResize('e', e)}
-          style={{ pointerEvents: "auto" }}
+          style={{ 
+            pointerEvents: "auto",
+            width: `${dynamicHandleSize}px`,
+            height: `${dynamicHandleSize}px`,
+            top: '50%',
+            right: `-${handleOffset}px`,
+            transform: 'translateY(-50%)'
+          }}
         />
         
         {/* Connecting lines for professional look */}
@@ -6293,8 +6362,29 @@ const MindMapEditor = () => {
         />
         <ResizeBoundingBox />
         {selectionBox && (() => {
-          const avgDimension = (selectionBox.width + selectionBox.height) / 2;
-          const computedStrokeWidth = Math.max(1, avgDimension * 0.02);
+          // Calculate average dimension based on nodes within the selection box, not the box itself
+          const nodesInSelection = visibleNodes.filter(node => {
+            const nodeRect = {
+              x: node.x,
+              y: node.y,
+              width: node.width || DEFAULT_WIDTH,
+              height: node.height || DEFAULT_HEIGHT,
+            };
+            return rectsIntersect(nodeRect, selectionBox);
+          });
+          
+          // Calculate average dimension of nodes in selection, not the selection box itself
+          let avgNodeDimension = 100; // Default for when no nodes selected
+          if (nodesInSelection.length > 0) {
+            const totalDimension = nodesInSelection.reduce((sum, node) => {
+              const width = node.width || DEFAULT_WIDTH;
+              const height = node.height || DEFAULT_HEIGHT;
+              return sum + (width + height) / 2;
+            }, 0);
+            avgNodeDimension = totalDimension / nodesInSelection.length;
+          }
+          
+          const computedStrokeWidth = Math.max(1, avgNodeDimension * 0.02);
           return (
             <svg
               style={{
