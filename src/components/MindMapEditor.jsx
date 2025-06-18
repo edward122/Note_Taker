@@ -2122,19 +2122,61 @@ const MindMapEditor = () => {
   };
   // --- ZOOM HANDLERS ---
   const handleZoomIn = () => {
-    setZoom((prev) => {
-      const newZoom = Math.min(MAX_ZOOM, prev + ZOOM_STEP);
-      zoomRef.current = newZoom; // update the ref with the new zoom
-      return newZoom;
-    });
+    const container = outerRef.current;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.min(MAX_ZOOM, oldZoom + ZOOM_STEP);
+    
+    // Calculate the point in world coordinates at the center
+    const pointInWorld = {
+      x: (centerX - panRef.current.x) / oldZoom,
+      y: (centerY - panRef.current.y) / oldZoom,
+    };
+    
+    // Calculate new pan to keep the center point fixed
+    const newPan = {
+      x: centerX - pointInWorld.x * newZoom,
+      y: centerY - pointInWorld.y * newZoom,
+    };
+    
+    setZoom(newZoom);
+    setPan(newPan);
+    zoomRef.current = newZoom;
+    panRef.current = newPan;
   };
 
   const handleZoomOut = () => {
-    setZoom((prev) => {
-      const newZoom = Math.max(MIN_ZOOM, prev - ZOOM_STEP);
-      zoomRef.current = newZoom; // update the ref with the new zoom
-      return newZoom;
-    });
+    const container = outerRef.current;
+    if (!container) return;
+    
+    const rect = container.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.max(MIN_ZOOM, oldZoom - ZOOM_STEP);
+    
+    // Calculate the point in world coordinates at the center
+    const pointInWorld = {
+      x: (centerX - panRef.current.x) / oldZoom,
+      y: (centerY - panRef.current.y) / oldZoom,
+    };
+    
+    // Calculate new pan to keep the center point fixed
+    const newPan = {
+      x: centerX - pointInWorld.x * newZoom,
+      y: centerY - pointInWorld.y * newZoom,
+    };
+    
+    setZoom(newZoom);
+    setPan(newPan);
+    zoomRef.current = newZoom;
+    panRef.current = newPan;
   };
   useEffect(() => {
     const container = outerRef.current;
@@ -4087,6 +4129,7 @@ const MindMapEditor = () => {
   // Touch event handlers for mobile panning and pinch-to-zoom
   const handleTouchStart = (e) => {
     if (!isMobile) return;
+    e.preventDefault(); // Always prevent default to avoid iOS browser zoom
     if (e.touches.length === 1) {
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, pan: { ...panRef.current } };
     } else if (e.touches.length === 2) {
@@ -4119,7 +4162,37 @@ const MindMapEditor = () => {
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const newDistance = Math.sqrt(dx * dx + dy * dy);
       const scale = newDistance / lastDistance.current;
-      let newZoom = clamp(zoomRef.current * scale, MIN_ZOOM, MAX_ZOOM);
+      
+      const oldZoom = zoomRef.current;
+      let newZoom = clamp(oldZoom * scale, MIN_ZOOM, MAX_ZOOM);
+      
+      // Calculate the zoom center (midpoint between the two touches)
+      const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      
+      // Get container bounds to adjust touch coordinates
+      const container = outerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const adjustedCenterX = centerX - rect.left;
+        const adjustedCenterY = centerY - rect.top;
+        
+        // Calculate the point in world coordinates before zoom
+        const pointInWorld = {
+          x: (adjustedCenterX - panRef.current.x) / oldZoom,
+          y: (adjustedCenterY - panRef.current.y) / oldZoom,
+        };
+        
+        // Calculate new pan to keep the same world point under the zoom center
+        const newPan = {
+          x: adjustedCenterX - pointInWorld.x * newZoom,
+          y: adjustedCenterY - pointInWorld.y * newZoom,
+        };
+        
+        setPan(newPan);
+        panRef.current = newPan;
+      }
+      
       throttledSetZoom.current(newZoom);
       lastDistance.current = newDistance;
     }
@@ -5261,7 +5334,8 @@ const MindMapEditor = () => {
         userSelect: "none",
         cursor: isDragging || rightClickMoved ? "grabbing" : "default",
         height: "100vh",
-        position: "relative"
+        position: "relative",
+        touchAction: "none" // Prevent iOS Safari pinch-to-zoom on canvas
       }}
       ref={outerRef}
       onContextMenu={(e) => e.preventDefault()}
