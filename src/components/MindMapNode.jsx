@@ -1,5 +1,6 @@
 import React, { memo, useRef, useCallback } from "react";
 import { DEFAULT_WIDTH, DEFAULT_HEIGHT } from "./constants";
+import RichTextEditor from "./RichTextEditor";
 
 const MindMapNode = memo(({
   node,
@@ -23,6 +24,7 @@ const MindMapNode = memo(({
   onStop,
   hoveredNodeId,
   lowDetail,
+  updateNodeText,
 }) => {
   const isDraggingRef = useRef(false);
 
@@ -67,6 +69,27 @@ const MindMapNode = memo(({
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
   }, [node.id, effectiveX, effectiveY, editingNodeId, onStart, onDrag, onStop]);
+
+  // Handle checkbox clicks in display mode (without entering edit mode)
+  const handleContentClick = useCallback((e) => {
+    const checkBox = e.target.closest(".rt-check-box");
+    if (checkBox && updateNodeText) {
+      e.preventDefault();
+      e.stopPropagation();
+      const isChecked = checkBox.getAttribute("data-checked") === "true";
+      checkBox.setAttribute("data-checked", isChecked ? "false" : "true");
+      // Toggle parent's checked class
+      const parent = checkBox.closest(".rt-checklist-item");
+      if (parent) {
+        parent.classList.toggle("rt-checked", !isChecked);
+      }
+      // Get the updated HTML from the container
+      const container = e.currentTarget;
+      if (container) {
+        updateNodeText(node.id, container.innerHTML, { trackUndo: false });
+      }
+    }
+  }, [node.id, updateNodeText]);
 
   // Extreme zoom-out: simplified colored rectangle
   if (lowDetail) {
@@ -163,34 +186,18 @@ const MindMapNode = memo(({
       }}
     >
       {editingNodeId === node.id ? (
-        <textarea
-          value={editedText}
-          placeholder="Type something..."
-          onChange={(e) => {
-            setEditedText(e.target.value);
+        <RichTextEditor
+          initialContent={editedText}
+          onChange={(html) => {
+            setEditedText(html);
             handleTyping(node.id);
           }}
-          onBlur={() => handleTextBlur(node.id)}
-          autoFocus
-          style={{
-            backgroundColor: "inherit",
-            width: "100%",
-            height: "107%",
-            fontSize: "inherit",
-            color: "inherit",
-            fontStyle: "inherit",
-            fontFamily: "inherit",
-            fontWeight: "inherit",
-            textDecoration: "inherit",
-            textAlign: "inherit",
-            border: "none",
-            outline: "none",
-            resize: "none",
-            textShadow: textShadowStyle,
-            padding: 0,
-            margin: 0,
-            boxSizing: "border-box",
+          onBlur={(html) => {
+            setEditedText(html);
+            handleTextBlur(node.id);
           }}
+          nodeId={node.id}
+          textShadowStyle={textShadowStyle}
         />
       ) : node.type === "image" ? (
         <img
@@ -204,8 +211,13 @@ const MindMapNode = memo(({
           }}
         />
       ) : (
-        node.text && node.text.trim() ? (
-          <span style={{ whiteSpace: "pre-wrap" }}>{node.text}</span>
+        node.text && node.text.trim() && node.text.trim() !== "<br>" ? (
+          <div
+            className="rt-content"
+            style={{ whiteSpace: "pre-wrap", lineHeight: "1.5" }}
+            dangerouslySetInnerHTML={{ __html: node.text }}
+            onClick={handleContentClick}
+          />
         ) : (
           <span style={{ whiteSpace: "pre-wrap", opacity: 0.35, fontStyle: "italic" }}>Untitled</span>
         )

@@ -23,6 +23,7 @@ import CanvasLinks from "./CanvasLinks";
 import { computePyramidLayoutWithLevels, computeHorizontalTreeLayout, computeRadialLayout } from "./layoutUtils";
 import { fetchImage } from "../utils/imageUtils";
 import ChatBox from "./ChatBox";
+import FormattingToolbar from "./FormattingToolbar";
 import "./new.css";
 
 // Extracted modules
@@ -85,7 +86,8 @@ const VirtualNodeRenderer = memo(({
   zoomRef,
   lowDetail,
   snapSettingsRef,
-  groupDeltaRef
+  groupDeltaRef,
+  updateNodeText,
 }) => {
   // Snap helper
   const snapPos = (x, y) => {
@@ -249,6 +251,7 @@ const VirtualNodeRenderer = memo(({
         linkingSource={linkingSource}
         hoveredNodeId={hoveredNodeId}
         lowDetail={lowDetail}
+        updateNodeText={updateNodeText}
         onStart={isMobile ? NOOP_FALSE : (e, data) => {
           if (editingNodeId === node.id) return false;
           setIsDragging(true);
@@ -431,7 +434,8 @@ const VirtualNodeRenderer = memo(({
     setHoveredNodeId, linkingSource, hoveredNodeId, outerRef,
     panRef, dragStartRef, multiDragStartRef, setIsDragging, setNodes,
     setGroupDelta, mindMapId, pushSingleNodeToUndoStack, pushSelectionToUndoStack,
-    setSelectedNodes, updateGroupDelta, lowDetail, snapSettingsRef, groupDeltaRef
+    setSelectedNodes, updateGroupDelta, lowDetail, snapSettingsRef, groupDeltaRef,
+    updateNodeText
   ]);
   
   // Render pre-sorted visible nodes + alignment guides
@@ -1515,8 +1519,9 @@ const MindMapEditor = () => {
     try {
       pushSelectionToUndoStack();
       
-      // If empty, save as "Untitled" so the node isn't blank
-      const finalText = editedText.trim() || "Untitled";
+      // Strip HTML tags to check if content is empty
+      const plainText = editedText.replace(/<[^>]*>/g, "").trim();
+      const finalText = plainText ? editedText : "Untitled";
       
       const nodeRef = doc(db, "mindMaps", mindMapId, "nodes", nodeId);
       await updateDoc(nodeRef, {
@@ -3353,6 +3358,7 @@ const MindMapEditor = () => {
           lowDetail={lowDetail}
           snapSettingsRef={snapSettingsRef}
           groupDeltaRef={groupDeltaRef}
+          updateNodeText={updateNodeText}
         />
         <ResizeBoundingBox />
         {selectionBox && (() => {
@@ -3404,6 +3410,19 @@ const MindMapEditor = () => {
           );
         })()}
       </div>
+      {editingNodeId && (() => {
+        const editNode = nodeMap.get(editingNodeId);
+        if (!editNode) return null;
+        return (
+          <FormattingToolbar
+            nodeId={editingNodeId}
+            nodeX={editNode.x}
+            nodeY={editNode.y}
+            zoom={zoom}
+            pan={pan}
+          />
+        );
+      })()}
       <ContextMenu
         contextMenuu={contextMenuu}
         rightClickMoved={rightClickMoved}
