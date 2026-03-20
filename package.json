@@ -19,8 +19,6 @@
     "@types/react-dom": "^18.2.15",
     "@vitejs/plugin-react": "^4.2.0",
     "gh-pages": "^6.3.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.0"
   },
@@ -33,9 +31,10 @@
     "html2canvas": "^1.4.1",
     "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "react-color": "^2.19.3",
     "react-draggable": "^4.4.6",
-    "react-javascript": "file:",
     "react-router-dom": "^7.4.1"
   }
 }

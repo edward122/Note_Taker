@@ -1,4 +1,5 @@
 // App.jsx
+import './App.css';
 import { Routes, Route } from 'react-router-dom';
 import AuthForm from './components/AuthForm';
 import Dashboard from './components/Dashboard';

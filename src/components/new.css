@@ -1,7 +1,7 @@
-html, body {
-  /* A radial gradient gives a softer background with depth 0C1218*/
-  /*background: radial-gradient(circle at center, #1D2022 0%, #0f1011 100%);*/
-  /*background: radial-gradient(circle at center, #1c2229 0%, #0C1218 100%);*/
+/* Only apply editor-specific body overrides when the editor is active.
+   The MindMapEditor component adds this class to <body> on mount. */
+html.mindmap-editor-active,
+html.mindmap-editor-active body {
   background: radial-gradient(circle at center, #000000 0%, #171a1b 110%);
   overflow: hidden;
   height: 100%;
@@ -176,3 +176,34 @@ button:hover {
 /* Hover effects for middle handles */
 .resize-handle.n:hover, .resize-handle.s:hover { transform: translateX(-50%) scale(1.2); }
 .resize-handle.w:hover, .resize-handle.e:hover { transform: translateY(-50%) scale(1.2); }
+
+/* ===== Remote Cursor Styles ===== */
+.remote-cursor {
+  animation: cursorFadeIn 0.2s ease;
+  will-change: transform;
+}
+
+@keyframes cursorFadeIn {
+  from { opacity: 0; transform: translate(var(--x, 0), var(--y, 0)) scale(0.5); }
+  to { opacity: 1; transform: translate(var(--x, 0), var(--y, 0)) scale(1); }
+}
+
+.remote-cursor-label {
+  animation: fadeIn 0.15s ease;
+}
+
+/* Remote selection overlay glow */
+.remote-selection-overlay {
+  animation: selectionPulse 2s ease-in-out infinite;
+}
+
+@keyframes selectionPulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.5; }
+}
+
+/* Follow button hover */
+.active-users-compact:hover {
+  border-color: #4CAF50 !important;
+  box-shadow: 0 2px 12px rgba(76, 175, 80, 0.15) !important;
+}

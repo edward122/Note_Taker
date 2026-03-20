@@ -1162,7 +1162,7 @@ USER REQUEST: "${promptText}"`;
         )}
       </div>
       <div  style={{width:"16%", marginLeft:"83%", marginTop:"22%", background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)", color:"white", borderRadius:"8px",position:"absolute"}}>
-        <paper
+        <Paper
         
         >
           
@@ -1194,7 +1194,7 @@ USER REQUEST: "${promptText}"`;
                         <BorderClearIcon />
                       </ToggleButton>
                     </ToggleButtonGroup>
-                    </paper>
+                    </Paper>
                     </div>
       <div style={{ padding: "7px", display: "flex" }}>
         <TextField

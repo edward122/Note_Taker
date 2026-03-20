@@ -10,22 +10,13 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  setDoc,
   updateDoc,
   arrayUnion,
   writeBatch
 } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase/firebase';
 import { useNavigate } from 'react-router-dom';
 import {
-  Grid,
-  Card,
-  CardContent,
-  CardActions,
-  Typography,
-  Button,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -35,13 +26,8 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Box,
-  useTheme,
-  useMediaQuery
 } from '@mui/material';
-import DeleteIcon from '@mui/icons-material/Delete';
-import AddIcon from '@mui/icons-material/Add';
-import ShareIcon from '@mui/icons-material/Share';
+import { getAllThumbnails, deleteThumbnail } from '../utils/thumbnailStore';
 
 const templates = {
   blank: [],
@@ -57,6 +43,56 @@ const templates = {
   ]
 };
 
+const ACCENT_COLORS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e',
+  '#14b8a6', '#f59e0b', '#3b82f6', '#10b981',
+];
+const getAccent = (i) => ACCENT_COLORS[i % ACCENT_COLORS.length];
+
+const formatDate = (ts) => {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHrs = Math.floor(diffMins / 60);
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+// ── SVG Icons ──────────────────────────────────────────────
+const PlusIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+);
+const UploadIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+);
+const ShareIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+);
+const TrashIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+);
+const MapIcon = () => (
+  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="6.7" y1="7.3" x2="9.8" y2="10.2"/><line x1="14.2" y1="10.2" x2="17.3" y2="7.3"/><line x1="6.7" y1="16.7" x2="9.8" y2="13.8"/><line x1="14.2" y1="13.8" x2="17.3" y2="16.7"/></svg>
+);
+const LogOutIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+);
+const StarIcon = ({ filled }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24"
+    fill={filled ? '#f59e0b' : 'none'}
+    stroke={filled ? '#f59e0b' : 'currentColor'}
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+  </svg>
+);
+
+// ══════════════════════════════════════════════════════════════
 const Dashboard = () => {
   const [mindMaps, setMindMaps] = useState([]);
   const [deleteId, setDeleteId] = useState(null);
@@ -65,484 +101,341 @@ const Dashboard = () => {
   const [openNewMapDialog, setOpenNewMapDialog] = useState(false);
   const [newMapName, setNewMapName] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('blank');
-  // State for share functionality:
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [shareMindMapId, setShareMindMapId] = useState(null);
   const [shareEmail, setShareEmail] = useState('');
+  const [user, setUser] = useState(null);
+  const [thumbnails, setThumbnails] = useState(new Map());
   const navigate = useNavigate();
-
-  // Ref for import file input
   const fileInputRef = useRef(null);
 
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  // Load thumbnails from IndexedDB on mount
+  useEffect(() => {
+    getAllThumbnails().then(setThumbnails);
+  }, []);
 
   useEffect(() => {
-    // Wait for the current user
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      if (!user) {
-        navigate('/');
-        return;
-      }
+    const unsubscribeAuth = auth.onAuthStateChanged((u) => {
+      if (!u) { navigate('/'); return; }
+      setUser(u);
+      const ownedQuery = query(collection(db, 'mindMaps'), where('userId', '==', u.uid));
+      const sharedQuery = query(collection(db, 'mindMaps'), where('collaborators', 'array-contains', u.email));
 
-      // Query for maps the user owns
-      const ownedQuery = query(
-        collection(db, 'mindMaps'),
-        where('userId', '==', user.uid)
-      );
-
-      // Query for maps shared with the user (collaborators array contains user's email)
-      const sharedQuery = query(
-        collection(db, 'mindMaps'),
-        where('collaborators', 'array-contains', user.email)
-      );
-
-      // Subscribe to owned maps
       const unsubscribeOwned = onSnapshot(ownedQuery, (snapshot) => {
-        const ownedMaps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const ownedMaps = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         setMindMaps(prev => {
-          // Remove duplicates if any exist (in case a map appears in both queries)
-          const combined = [...ownedMaps, ...prev.filter(map => map.userId !== user.uid)];
+          const combined = [...ownedMaps, ...prev.filter(m => m.userId !== u.uid)];
           return combined;
         });
       });
-
-      // Subscribe to shared maps
       const unsubscribeShared = onSnapshot(sharedQuery, (snapshot) => {
-        const sharedMaps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const sharedMaps = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         setMindMaps(prev => {
-          // Combine and remove duplicates (by id)
           const combined = [...prev, ...sharedMaps];
-          const unique = combined.filter((map, index, self) =>
-            index === self.findIndex(m => m.id === map.id)
-          );
-          return unique;
+          return combined.filter((m, i, self) => i === self.findIndex(x => x.id === m.id));
         });
       });
-
-      return () => {
-        unsubscribeOwned();
-        unsubscribeShared();
-      };
+      return () => { unsubscribeOwned(); unsubscribeShared(); };
     });
-
     return () => unsubscribeAuth();
   }, [navigate]);
 
-  const handleOpenNewMapDialog = () => {
-    setOpenNewMapDialog(true);
-  };
-
+  // ── Handlers ──────────────────────────────────────────────
   const handleCreateNewMindMap = async () => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const u = auth.currentUser;
+    if (!u) return;
     try {
       const docRef = await addDoc(collection(db, 'mindMaps'), {
         title: newMapName || 'Untitled Mind Map',
-        userId: user.uid,
-        createdAt: serverTimestamp()
+        userId: u.uid,
+        createdAt: serverTimestamp(),
       });
-      // Pre-populate nodes if a template is chosen
-      const templateNodes = templates[selectedTemplate];
-      for (const node of templateNodes) {
+      for (const node of templates[selectedTemplate]) {
         await addDoc(collection(db, 'mindMaps', docRef.id, 'nodes'), node);
       }
       setOpenNewMapDialog(false);
       setNewMapName('');
       setSelectedTemplate('blank');
       navigate(`/editor/${docRef.id}`);
-    } catch (error) {
-      console.error("Error creating mind map:", error);
-    }
+    } catch (err) { console.error('Error creating mind map:', err); }
   };
 
-  const handleDeleteClick = (id) => {
-    setDeleteId(id);
-    setOpenFirstDialog(true);
-  };
-
-  const handleFirstConfirm = () => {
-    setOpenFirstDialog(false);
-    setOpenSecondDialog(true);
-  };
-
+  const handleDeleteClick = (id) => { setDeleteId(id); setOpenFirstDialog(true); };
+  const handleFirstConfirm = () => { setOpenFirstDialog(false); setOpenSecondDialog(true); };
   const handleSecondConfirm = async () => {
     try {
-      // 1. Delete all node documents in the "nodes" subcollection
-      const nodesSnapshot = await getDocs(
-        collection(db, 'mindMaps', deleteId, 'nodes')
-      );
-      const nodesBatch = writeBatch(db);
-      nodesSnapshot.forEach((docSnapshot) => {
-        nodesBatch.delete(docSnapshot.ref);
-      });
-      await nodesBatch.commit();
-  
-      // 2. Delete all link documents in the "links" subcollection
-      const linksSnapshot = await getDocs(
-        collection(db, 'mindMaps', deleteId, 'links')
-      );
-      const linksBatch = writeBatch(db);
-      linksSnapshot.forEach((docSnapshot) => {
-        linksBatch.delete(docSnapshot.ref);
-      });
-      await linksBatch.commit();
-  
-      // 3. Delete the main mind map document
+      const nodesSnap = await getDocs(collection(db, 'mindMaps', deleteId, 'nodes'));
+      const nb = writeBatch(db); nodesSnap.forEach(d => nb.delete(d.ref)); await nb.commit();
+      const linksSnap = await getDocs(collection(db, 'mindMaps', deleteId, 'links'));
+      const lb = writeBatch(db); linksSnap.forEach(d => lb.delete(d.ref)); await lb.commit();
       await deleteDoc(doc(db, 'mindMaps', deleteId));
-  
-      setOpenSecondDialog(false);
-      setDeleteId(null);
-    } catch (error) {
-      console.error("Error deleting mind map:", error);
-    }
+      // Also remove thumbnail
+      deleteThumbnail(deleteId);
+      setOpenSecondDialog(false); setDeleteId(null);
+    } catch (err) { console.error('Error deleting mind map:', err); }
   };
+  const handleCancelDelete = () => { setOpenFirstDialog(false); setOpenSecondDialog(false); setDeleteId(null); };
 
-  const handleCancelDelete = () => {
-    setOpenFirstDialog(false);
-    setOpenSecondDialog(false);
-    setDeleteId(null);
-  };
-
-  // Share functionality: open share dialog for the given mind map
-  const handleShareClick = (id) => {
-    setShareMindMapId(id);
-    setShareDialogOpen(true);
-  };
-
+  const handleShareClick = (id) => { setShareMindMapId(id); setShareDialogOpen(true); };
   const handleShareMindMap = async () => {
     if (!shareEmail.trim() || !shareMindMapId) return;
     try {
-      const mindMapRef = doc(db, 'mindMaps', shareMindMapId);
-      await updateDoc(mindMapRef, {
-        collaborators: arrayUnion(shareEmail.trim())
-      });
-      setShareEmail('');
-      setShareDialogOpen(false);
-      setShareMindMapId(null);
-    } catch (error) {
-      console.error("Error sharing mind map:", error);
-    }
+      await updateDoc(doc(db, 'mindMaps', shareMindMapId), { collaborators: arrayUnion(shareEmail.trim()) });
+      setShareEmail(''); setShareDialogOpen(false); setShareMindMapId(null);
+    } catch (err) { console.error('Error sharing mind map:', err); }
   };
 
-  const handleCardClick = (id) => {
-    navigate(`/editor/${id}`);
-  };
-
-  // Import functionality: trigger file input
-  const handleImportClick = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
+  const handleImportClick = () => { fileInputRef.current?.click(); };
   const handleImportChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try {
       const text = await file.text();
       const data = JSON.parse(text);
-      if (!data.nodes || !data.links) {
-        throw new Error("Invalid file format");
-      }
-      const user = auth.currentUser;
-      // Create the new mind map document.
-      const mindMapRef = await addDoc(collection(db, "mindMaps"), {
-        title: file.name,
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-
-      // Prepare a mapping from old node IDs to new node IDs.
+      if (!data.nodes || !data.links) throw new Error('Invalid file format');
+      const u = auth.currentUser;
+      const mindMapRef = await addDoc(collection(db, 'mindMaps'), { title: file.name, userId: u.uid, createdAt: serverTimestamp() });
       const nodeIdMapping = {};
-
-      // Batch write for nodes.
-      const batchNodes = writeBatch(db);
+      const batchN = writeBatch(db);
       data.nodes.forEach((node) => {
-        const oldId = node.id; // Preserve the original ID for mapping.
-        // Create a new document reference which generates a new ID.
-        const newNodeRef = doc(collection(db, "mindMaps", mindMapRef.id, "nodes"));
-        const newNodeData = { ...node, id: newNodeRef.id }; // Override id with new ID.
-        batchNodes.set(newNodeRef, newNodeData);
-        nodeIdMapping[oldId] = newNodeRef.id;
+        const newRef = doc(collection(db, 'mindMaps', mindMapRef.id, 'nodes'));
+        batchN.set(newRef, { ...node, id: newRef.id });
+        nodeIdMapping[node.id] = newRef.id;
       });
-      await batchNodes.commit();
-
-      // Batch write for links.
-      const batchLinks = writeBatch(db);
+      await batchN.commit();
+      const batchL = writeBatch(db);
       data.links.forEach((link) => {
-        const newSource = nodeIdMapping[link.source];
-        const newTarget = nodeIdMapping[link.target];
-        if (!newSource || !newTarget) {
-          console.error("Skipping link: missing mapping for source or target");
-          return;
-        }
-        const { id, ...linkData } = link;
-        const newLinkRef = doc(collection(db, "mindMaps", mindMapRef.id, "links"));
-        batchLinks.set(newLinkRef, {
-          ...linkData,
-          source: newSource,
-          target: newTarget
-        });
+        const ns = nodeIdMapping[link.source], nt = nodeIdMapping[link.target];
+        if (!ns || !nt) return;
+        const { id, ...ld } = link;
+        batchL.set(doc(collection(db, 'mindMaps', mindMapRef.id, 'links')), { ...ld, source: ns, target: nt });
       });
-      await batchLinks.commit();
-
+      await batchL.commit();
       navigate(`/editor/${mindMapRef.id}`);
-    } catch (error) {
-      console.error("Error importing mind map:", error);
-    }
+    } catch (err) { console.error('Error importing mind map:', err); }
   };
 
+  const handleSignOut = () => auth.signOut().then(() => navigate('/'));
+  const isShared = (m) => m.userId !== user?.uid;
 
+  const handleToggleFavorite = async (e, mapId, currentVal) => {
+    e.stopPropagation();
+    try {
+      await updateDoc(doc(db, 'mindMaps', mapId), { favorite: !currentVal });
+    } catch (err) { console.error('Error toggling favorite:', err); }
+  };
+
+  // Sort: favorites first, then by most recently edited
+  const sortedMaps = [...mindMaps].sort((a, b) => {
+    const fa = a.favorite ? 1 : 0;
+    const fb = b.favorite ? 1 : 0;
+    if (fa !== fb) return fb - fa;
+    const ta = (a.updatedAt || a.createdAt);
+    const tb = (b.updatedAt || b.createdAt);
+    const da = ta?.toDate?.() || new Date(0);
+    const db_ = tb?.toDate?.() || new Date(0);
+    return db_ - da;
+  });
+
+  // ── Render ─────────────────────────────────────────────────
   return (
-    <Box sx={{
-      p: isMobile ? 1 : 3,
-      background: 'radial-gradient(circle at center, #1D2022 0%, #0f1011 100%)',
-      minHeight: '100vh',
-      color: '#fff',
-      border: isMobile ? 'none' : '5px solid #262626',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'flex-start',
-    }}>
-      <Box sx={{
-        mb: isMobile ? 1 : 3,
-        display: 'flex',
-        flexDirection: isMobile ? 'column' : 'row',
-        alignItems: isMobile ? 'stretch' : 'center',
-        width: isMobile ? '100%' : 'auto',
-      }}>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleOpenNewMapDialog}
-          sx={{
-            mr: isMobile ? 0 : 2,
-            mb: isMobile ? 1 : 0,
-            width: isMobile ? '100%' : 'auto',
-            background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)"
-          }}
-        >
-          New Mind Map
-        </Button>
-        <Button
-          variant="contained"
-          onClick={handleImportClick}
-          sx={{
-            mr: isMobile ? 0 : 1,
-            mb: isMobile ? 1 : 0,
-            width: isMobile ? '100%' : 'auto',
-            background: "radial-gradient(circle at center,rgba(29, 32, 34, .5) 0%,rgba(56, 60, 63, 0.73) 130%)"
-          }}
-        >
-          Import Mind Map
-        </Button>
-      </Box>
-      <Grid
-        container
-        spacing={isMobile ? 1 : 2}
-        sx={{
-          mt: isMobile ? 1 : 2,
-          mb: isMobile ? 1 : 3,
-          width: '100%',
-        }}
-        justifyContent={isMobile ? 'center' : 'flex-start'}
-      >
-        {mindMaps.map((mindMap) => (
-          <Grid item xs={12} sm={6} md={4} lg={3} key={mindMap.id} sx={{ display: 'flex', justifyContent: isMobile ? 'center' : 'flex-start' }}>
-            <Card
-              sx={{
-                background: 'linear-gradient(135deg, #23272f 60%, #23272f 100%)',
-                color: '#fff',
-                p: isMobile ? 1 : 2,
-                borderRadius: '14px',
-                border: 'none',
-                boxShadow: isMobile ? '0 1px 4px 1px rgba(0,0,0,0.3)' : '0 2px 8px 2px rgba(0,0,0,0.5)',
-                transition: 'transform 0.3s, box-shadow 0.2s, border 0.3s',
-                height: isMobile ? 'auto' : '120px',
-                width: isMobile ? '100%' : '260px',
-                maxWidth: '100%',
-                minWidth: isMobile ? '0' : '200px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                '&:hover': {
-                  border: '2px solid #007bff',
-                  transform: isMobile ? 'none' : 'translateY(-4px) scale(1.02)',
-                  boxShadow: isMobile ? '0 2px 8px 2px rgba(0,0,0,0.4)' : '0 4px 16px 4px rgba(0,0,0,0.7)',
-                },
-              }}
-            >
-              <CardContent
-                onClick={() => handleCardClick(mindMap.id)}
-                sx={{
-                  cursor: 'pointer',
-                  p: isMobile ? 1 : 2,
-                  pb: '8px !important',
-                  textAlign: isMobile ? 'center' : 'left',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  minHeight: isMobile ? 'auto' : '50px',
-                }}
-              >
-                <Typography
-                  variant={isMobile ? 'h6' : 'h6'}
-                  sx={{
-                    fontWeight: 900,
-                    fontSize: isMobile ? '1.1rem' : '1.2rem',
-                    wordBreak: 'break-word',
-                    letterSpacing: '-0.5px',
-                    lineHeight: 1.2,
-                    textShadow: '0 2px 8px #000a',
-                  }}
+    <div className="dashboard-page">
+      <div className="dashboard-content">
+        {/* Header */}
+        <header className="dashboard-header">
+          <div className="dashboard-header-left">
+            <div className="dashboard-logo-icon">N</div>
+            <span className="dashboard-logo-text">Note Taker</span>
+          </div>
+          <div className="dashboard-header-right">
+            {user && <span className="dashboard-user-email">{user.email}</span>}
+            <button className="dashboard-signout-btn" onClick={handleSignOut}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <LogOutIcon /> Sign Out
+              </span>
+            </button>
+          </div>
+        </header>
+
+        {/* Toolbar */}
+        <div className="dashboard-toolbar">
+          <button className="dashboard-primary-btn" onClick={() => setOpenNewMapDialog(true)}>
+            <PlusIcon /> New Mind Map
+          </button>
+          <button className="dashboard-secondary-btn" onClick={handleImportClick}>
+            <UploadIcon /> Import
+          </button>
+          {sortedMaps.length > 0 && (
+            <span className="dashboard-map-count">{sortedMaps.length} mind map{sortedMaps.length !== 1 ? 's' : ''}</span>
+          )}
+        </div>
+
+        {/* Cards Grid */}
+        {sortedMaps.length === 0 ? (
+          <div className="dashboard-empty">
+            <div className="dashboard-empty-icon"><MapIcon /></div>
+            <div className="dashboard-empty-title">No mind maps yet</div>
+            <div className="dashboard-empty-desc">Create your first mind map to start organizing your thoughts visually.</div>
+          </div>
+        ) : (
+          <div className="dashboard-grid">
+            {sortedMaps.map((m, idx) => {
+              const accent = getAccent(idx);
+              const thumb = thumbnails.get(m.id);
+              const isFav = !!m.favorite;
+              return (
+                <div
+                  key={m.id}
+                  className={`dashboard-card${isFav ? ' dashboard-card-favorite' : ''}`}
+                  style={{ animationDelay: `${idx * 0.04}s` }}
+                  onClick={() => navigate(`/editor/${m.id}`)}
                 >
-                  {mindMap.title}
-                </Typography>
-              </CardContent>
-              <CardActions
-                sx={{
-                  border: '0px solid white',
-                  color: '#fff',
-                  borderRadius: '10%',
-                  justifyContent: isMobile ? 'center' : 'flex-end',
-                  p: isMobile ? 0.5 : 1,
-                  pt: 0,
-                  gap: isMobile ? 1 : 2,
-                }}
-              >
-                <IconButton onClick={() => handleShareClick(mindMap.id)} color="primary" size={isMobile ? 'small' : 'medium'} sx={{ mx: 0.5 }}>
-                  <ShareIcon fontSize={isMobile ? 'small' : 'medium'} />
-                </IconButton>
-                <IconButton onClick={() => handleDeleteClick(mindMap.id)} color="error" size={isMobile ? 'small' : 'medium'} sx={{ mx: 0.5 }}>
-                  <DeleteIcon fontSize={isMobile ? 'small' : 'medium'} />
-                </IconButton>
-              </CardActions>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+                  <div className="dashboard-card-accent" style={{ background: `linear-gradient(180deg, ${accent} 0%, transparent 100%)` }} />
+                  {/* Favorite star */}
+                  <button
+                    className={`dashboard-star-btn${isFav ? ' dashboard-star-btn-active' : ''}`}
+                    title={isFav ? 'Unfavorite' : 'Favorite'}
+                    onClick={e => handleToggleFavorite(e, m.id, isFav)}
+                  >
+                    <StarIcon filled={isFav} />
+                  </button>
+                  {/* Thumbnail preview */}
+                  {thumb ? (
+                    <div className="dashboard-card-thumbnail">
+                      <img src={thumb} alt="" loading="lazy" />
+                    </div>
+                  ) : (
+                    <div className="dashboard-card-thumbnail dashboard-card-thumbnail-empty">
+                      <MapIcon />
+                    </div>
+                  )}
+                  <div className="dashboard-card-body">
+                    <div className="dashboard-card-title">
+                      {m.title}
+                      {isShared(m) && <span className="dashboard-shared-badge">Shared</span>}
+                    </div>
+                    <div className="dashboard-card-date">{formatDate(m.updatedAt || m.createdAt)}</div>
+                  </div>
+                  <div className="dashboard-card-actions">
+                    <button
+                      className="dashboard-icon-btn dashboard-icon-btn-share"
+                      title="Share"
+                      onClick={e => { e.stopPropagation(); handleShareClick(m.id); }}
+                    >
+                      <ShareIcon />
+                    </button>
+                    <button
+                      className="dashboard-icon-btn dashboard-icon-btn-delete"
+                      title="Delete"
+                      onClick={e => { e.stopPropagation(); handleDeleteClick(m.id); }}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-      {/* Hidden file input for import */}
-      <input
-        type="file"
-        accept="application/json"
-        ref={fileInputRef}
-        style={{ display: 'none' }}
-        onChange={handleImportChange}
-      />
+      {/* Hidden file input */}
+      <input type="file" accept="application/json" ref={fileInputRef} style={{ display: 'none' }} onChange={handleImportChange} />
 
-      {/* New Mind Map Dialog */}
-      <Dialog
-        open={openNewMapDialog}
-        onClose={() => setOpenNewMapDialog(false)}
-        fullWidth
-        maxWidth={isMobile ? 'xs' : 'sm'}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
-      >
-        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Create New Mind Map</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Mind Map Name"
-            type="text"
-            fullWidth
-            value={newMapName}
-            onChange={(e) => setNewMapName(e.target.value)}
-            variant="filled"
-            InputLabelProps={{ style: { color: '#fff' } }}
-            sx={{ backgroundColor: '#555', fontSize: isMobile ? '1rem' : '1.1rem' }}
-          />
+      {/* Dialogs */}
+      <Dialog open={openNewMapDialog} onClose={() => setOpenNewMapDialog(false)} fullWidth maxWidth="sm"
+        PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle sx={dialogTitleSx}>Create New Mind Map</DialogTitle>
+        <DialogContent sx={dialogContentSx}>
+          <TextField autoFocus margin="dense" label="Mind Map Name" type="text" fullWidth
+            value={newMapName} onChange={e => setNewMapName(e.target.value)}
+            variant="filled" sx={textFieldSx} />
           <FormControl fullWidth margin="dense" variant="filled">
-            <InputLabel id="template-select-label" sx={{ color: '#fff' }}>Template</InputLabel>
-            <Select
-              labelId="template-select-label"
-              value={selectedTemplate}
-              label="Template"
-              onChange={(e) => setSelectedTemplate(e.target.value)}
-              sx={{ backgroundColor: '#555', color: '#fff' }}
-            >
+            <InputLabel sx={{ color: 'rgba(255,255,255,.4)' }}>Template</InputLabel>
+            <Select value={selectedTemplate} onChange={e => setSelectedTemplate(e.target.value)} sx={selectFieldSx}>
               <MenuItem value="blank">Blank</MenuItem>
               <MenuItem value="brainstorm">Brainstorm</MenuItem>
               <MenuItem value="project">Project</MenuItem>
             </Select>
           </FormControl>
         </DialogContent>
-        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
-          <Button onClick={() => setOpenNewMapDialog(false)} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>
-            Cancel
-          </Button>
-          <Button onClick={handleCreateNewMindMap} variant="contained" sx={{ width: isMobile ? '100%' : 'auto' }}>
-            Create
-          </Button>
+        <DialogActions sx={dialogActionsSx}>
+          <button className="dashboard-dialog-cancel" onClick={() => setOpenNewMapDialog(false)}>Cancel</button>
+          <button className="dashboard-dialog-confirm" onClick={handleCreateNewMindMap}>Create</button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirmation Dialogs */}
-      <Dialog
-        open={openFirstDialog}
-        onClose={handleCancelDelete}
-        fullWidth
-        maxWidth={isMobile ? 'xs' : 'sm'}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
-      >
-        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Confirm Delete</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ fontSize: isMobile ? '1rem' : '1.1rem' }}>Are you sure you want to delete this mind map?</Typography>
+      <Dialog open={openFirstDialog} onClose={handleCancelDelete} fullWidth maxWidth="sm"
+        PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle sx={dialogTitleSx}>Confirm Delete</DialogTitle>
+        <DialogContent sx={dialogContentSx}>
+          <p style={{ fontSize: '14px', color: 'rgba(255,255,255,.6)', lineHeight: 1.6, margin: 0 }}>
+            Are you sure you want to delete this mind map?
+          </p>
         </DialogContent>
-        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
-          <Button onClick={handleCancelDelete} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>Cancel</Button>
-          <Button onClick={handleFirstConfirm} color="primary" sx={{ width: isMobile ? '100%' : 'auto' }}>Yes</Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
-        open={openSecondDialog}
-        onClose={handleCancelDelete}
-        fullWidth
-        maxWidth={isMobile ? 'xs' : 'sm'}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
-      >
-        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Confirm Delete Again</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ fontSize: isMobile ? '1rem' : '1.1rem' }}>This action cannot be undone. Are you really sure?</Typography>
-        </DialogContent>
-        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
-          <Button onClick={handleCancelDelete} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>Cancel</Button>
-          <Button onClick={handleSecondConfirm} color="error" sx={{ width: isMobile ? '100%' : 'auto' }}>Delete</Button>
+        <DialogActions sx={dialogActionsSx}>
+          <button className="dashboard-dialog-cancel" onClick={handleCancelDelete}>Cancel</button>
+          <button className="dashboard-dialog-confirm" onClick={handleFirstConfirm}>Yes, Delete</button>
         </DialogActions>
       </Dialog>
 
-      {/* Share Dialog */}
-      <Dialog
-        open={shareDialogOpen}
-        onClose={() => setShareDialogOpen(false)}
-        fullWidth
-        maxWidth={isMobile ? 'xs' : 'sm'}
-        PaperProps={{ sx: { backgroundColor: '#424242', color: '#fff', borderRadius: isMobile ? 2 : 3, p: isMobile ? 1 : 2 } }}
-      >
-        <DialogTitle sx={{ fontSize: isMobile ? '1.1rem' : '1.3rem' }}>Share Mind Map</DialogTitle>
-        <DialogContent>
-          <TextField
-            label="Collaborator Email"
-            fullWidth
-            value={shareEmail}
-            onChange={(e) => setShareEmail(e.target.value)}
-            variant="filled"
-            InputLabelProps={{ style: { color: '#fff' } }}
-            sx={{ backgroundColor: '#555', fontSize: isMobile ? '1rem' : '1.1rem' }}
-          />
+      <Dialog open={openSecondDialog} onClose={handleCancelDelete} fullWidth maxWidth="sm"
+        PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle sx={dialogTitleSx}>Confirm Delete Again</DialogTitle>
+        <DialogContent sx={dialogContentSx}>
+          <p style={{ fontSize: '14px', color: 'rgba(255,255,255,.6)', lineHeight: 1.6, margin: 0 }}>
+            This action cannot be undone. Are you really sure?
+          </p>
         </DialogContent>
-        <DialogActions sx={{ flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 1 : 0 }}>
-          <Button onClick={() => setShareDialogOpen(false)} sx={{ color: '#fff', width: isMobile ? '100%' : 'auto' }}>
-            Cancel
-          </Button>
-          <Button onClick={handleShareMindMap} variant="contained" sx={{ width: isMobile ? '100%' : 'auto' }}>
-            Share
-          </Button>
+        <DialogActions sx={dialogActionsSx}>
+          <button className="dashboard-dialog-cancel" onClick={handleCancelDelete}>Cancel</button>
+          <button className="dashboard-dialog-confirm dashboard-dialog-confirm-danger" onClick={handleSecondConfirm}>Delete Forever</button>
         </DialogActions>
       </Dialog>
-    </Box>
+
+      <Dialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)} fullWidth maxWidth="sm"
+        PaperProps={{ sx: dialogPaperSx }}>
+        <DialogTitle sx={dialogTitleSx}>Share Mind Map</DialogTitle>
+        <DialogContent sx={dialogContentSx}>
+          <TextField label="Collaborator Email" fullWidth value={shareEmail}
+            onChange={e => setShareEmail(e.target.value)} variant="filled" sx={textFieldSx} />
+        </DialogContent>
+        <DialogActions sx={dialogActionsSx}>
+          <button className="dashboard-dialog-cancel" onClick={() => setShareDialogOpen(false)}>Cancel</button>
+          <button className="dashboard-dialog-confirm" onClick={handleShareMindMap}>Share</button>
+        </DialogActions>
+      </Dialog>
+    </div>
   );
+};
+
+// ── MUI sx props (static, defined once) ─────────────────────
+const dialogPaperSx = {
+  backgroundColor: '#1a1b1f',
+  color: '#e4e4e7',
+  borderRadius: '16px',
+  border: '1px solid rgba(255,255,255,.08)',
+  boxShadow: '0 24px 64px rgba(0,0,0,.5)',
+};
+const dialogTitleSx = { fontSize: '18px', fontWeight: 700, letterSpacing: '-0.3px', padding: '24px 24px 8px' };
+const dialogContentSx = { padding: '16px 24px' };
+const dialogActionsSx = { padding: '12px 24px 20px', gap: '8px' };
+const textFieldSx = {
+  '& .MuiFilledInput-root': {
+    backgroundColor: 'rgba(255,255,255,.05)', borderRadius: '10px', color: '#e4e4e7',
+    '&:hover': { backgroundColor: 'rgba(255,255,255,.07)' },
+    '&.Mui-focused': { backgroundColor: 'rgba(255,255,255,.07)' },
+  },
+  '& .MuiInputLabel-root': { color: 'rgba(255,255,255,.4)' },
+  '& .MuiInputLabel-root.Mui-focused': { color: '#818cf8' },
+  '& .MuiFilledInput-underline:before': { borderBottom: 'none' },
+  '& .MuiFilledInput-underline:after': { borderBottomColor: '#6366f1' },
+};
+const selectFieldSx = {
+  backgroundColor: 'rgba(255,255,255,.05)', borderRadius: '10px', color: '#e4e4e7',
+  '& .MuiSelect-icon': { color: 'rgba(255,255,255,.4)' },
+  '&:before': { borderBottom: 'none' },
+  '&:after': { borderBottomColor: '#6366f1' },
 };
 
 export default Dashboard;
